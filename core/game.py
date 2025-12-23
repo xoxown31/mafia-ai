@@ -1,70 +1,76 @@
 from typing import List, Dict, Tuple
 import config
-
+import random
 
 class Agent:
     def __init__(self):
-        self.id = 0  # id
-        self.suspicion = []  # 0~1 사이의 의심도
-        self.role = config.ROLE_CITIZEN  # 역할
-        self.character = 0  # 캐릭터 성격
-
+        self.id = 0
+        self.suspicion = []
+        self.role = config.ROLE_CITIZEN # 이제 숫자(0)로 초기화됨
+        self.character = 0
+        self.alive = True
+        self.claimed_target = -1 # 주장 대상 초기화
 
 class MafiaGame:
     """
-    순수 마피아 게임 엔진 (Gym/PyTorch 의존성 없음)
+    순수 마피아 게임 엔진
     """
-
     def __init__(self):
-        self.players = []  # 플레이어 객체 리스트
+        self.players = []
         self.phase = config.PHASE_DAY_CLAIM
         self.day_count = 1
-        self.night_state = 0  # 죽은 사람 id
-        self.vote = []  # 투표수
-        self.ailve_number = 8
-        self.alive_status = [True for _ in range(config.PLAYER_COUNT)]  # 생존 여부
+        self.alive_status = []
+        self.vote_counts = []
 
     def reset(self) -> Dict:
         """게임을 초기화하고 초기 상태를 반환"""
         self.day_count = 1
         self.phase = config.PHASE_DAY_CLAIM
         self.players = [Agent() for _ in range(config.PLAYER_COUNT)]
-        for i, role in enumerate(config.ROLES):
-            self.players[i].role = role
+        
+        for i, role_int in enumerate(config.ROLES):
+            self.players[i].role = role_int
             self.players[i].id = i
             self.players[i].suspicion = [0.5 for _ in range(config.PLAYER_COUNT)]
+            self.players[i].claimed_target = -1
+            self.players[i].alive = True
 
-        self.ailve_number = config.PLAYER_COUNT
         self.alive_status = [True for _ in range(config.PLAYER_COUNT)]
+
+        # 디버깅용: 시작할 때 직업 분포가 맞는지 출력 (로그 확인용)
+        roles = [p.role for p in self.players]
+        print(f"DEBUG: Game Reset with Roles: {roles}")
+
         return self._get_game_status()
 
     def process_turn(self, action: int) -> Tuple[Dict, bool, bool]:
-        """
-        한 턴(혹은 한 단계)을 진행
-        Returns: (game_status, is_game_over, is_win)
-        """
-        # TODO: AI 행동 처리 -> RBA 행동 처리 -> 결과 정산
-        # 게임이 끝났는지 확인
+        # 승패 조건 먼저 체크
         is_over, is_win = self.check_game_over()
         if is_over:
             return self._get_game_status(), is_over, is_win
 
-        # 현재 페이즈에 따른 분기 처리
-        if self.phase in [
-            config.PHASE_DAY_CLAIM,
-            config.PHASE_DAY_DISCUSSION,
-            config.PHASE_DAY_VOTE,
-        ]:
-            self.morning_turn(ai_action=action)
+        # 페이즈별 로직 실행
+        if self.phase == config.PHASE_DAY_CLAIM:
+            self._process_day_claim(action)
+            self.phase = config.PHASE_DAY_DISCUSSION
+            
+        elif self.phase == config.PHASE_DAY_DISCUSSION:
+            self._process_day_discussion()
+            self.phase = config.PHASE_DAY_VOTE
+            
+        elif self.phase == config.PHASE_DAY_VOTE:
+            self._process_day_vote(action)
+            self.phase = config.PHASE_NIGHT
+            
         elif self.phase == config.PHASE_NIGHT:
-            self.night_turn(ai_action=action)
-            # 밤이 끝나면 다음 날 주장 단계로 전환
+            self.night_turn(action)
             self.phase = config.PHASE_DAY_CLAIM
             self.day_count += 1
 
+        # 턴 종료 후 승패 다시 체크
         is_over, is_win = self.check_game_over()
         return self._get_game_status(), is_over, is_win
-
+    
     def morning_turn(self, ai_action: int):
         """낮 단계: 상태에 따라 적절한 처리 메서드 호출"""
 
@@ -198,7 +204,6 @@ class MafiaGame:
         self.alive_status = [1 if p.alive else 0 for p in self.players]
 
     def _get_game_status(self) -> Dict:
-        # Phase를 숫자로 매핑 (Env 호환성)
         phase_map = {
             config.PHASE_DAY_CLAIM: 0,
             config.PHASE_DAY_DISCUSSION: 1,
@@ -208,21 +213,29 @@ class MafiaGame:
         return {
             "day": self.day_count,
             "phase": phase_map.get(self.phase, 0),
-            "alive": self.alive_status,
+            "alive_status": self.alive_status,
+            # [수정 포인트] 이미 숫자이므로 변환 없이 그대로 내보냄
+            "roles": [p.role for p in self.players],
+            "id": 0 #random.randint(0, config.PLAYER_COUNT - 1)
         }
 
     # 게임 종료 여부 및 승리 팀 확인
     def check_game_over(self) -> Tuple[bool, bool]:
-        mafia_count = sum(
-            1 for p in self.players if p.role == config.ROLE_MAFIA and p.alive
-        )
-        citizen_count = sum(
-            1 for p in self.players if p.role != config.ROLE_MAFIA and p.alive
-        )
+        # 생존한 마피아와 시민 수 계산
+        mafia_count = sum(1 for p in self.players if p.role == config.ROLE_MAFIA and p.alive)
+        citizen_count = sum(1 for p in self.players if p.role != config.ROLE_MAFIA and p.alive)
 
+        # 1. 시민 팀 승리 조건 (마피아 전멸)
         if mafia_count == 0:
-            return True, True  # 시민 승리
-        elif mafia_count >= citizen_count:
-            return True, False  # 마피아 승리
-        else:
-            return False, False  # 게임 계속
+            # 내가 시민 팀(시민, 경찰, 의사)이면 승리, 마피아면 패배
+            am_i_citizen_team = (self.players[0].role != config.ROLE_MAFIA)
+            return True, am_i_citizen_team
+
+        # 2. 마피아 팀 승리 조건 (마피아 수 >= 시민 수)
+        if mafia_count >= citizen_count:
+            # 내가 마피아면 승리, 아니면 패배
+            am_i_mafia = (self.players[0].role == config.ROLE_MAFIA)
+            return True, am_i_mafia
+
+        # 게임 계속
+        return False, False
