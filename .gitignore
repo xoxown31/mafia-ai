@@ -26,6 +26,7 @@ models/
 data/
 *.pt
 *.pth
+mafia_game_log.txt
 
 # Jupyter Notebook
 .ipynb_checkpoints
