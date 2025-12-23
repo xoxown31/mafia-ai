@@ -1,5 +1,3 @@
-# config.py
-
 # 역할 지정
 ROLE_CITIZEN = 0
 ROLE_POLICE = 1
@@ -15,14 +13,14 @@ PHASE_NIGHT = "night"  # 밤: 행동 단계
 # 게임 설정
 PLAYER_COUNT = 8
 ROLES = [
-    "Mafia",
-    "Mafia",
-    "Police",
-    "Doctor",
-    "Citizen",
-    "Citizen",
-    "Citizen",
-    "Citizen",
+    ROLE_MAFIA,
+    ROLE_MAFIA,
+    ROLE_POLICE,
+    ROLE_DOCTOR,
+    ROLE_CITIZEN,
+    ROLE_CITIZEN,
+    ROLE_CITIZEN,
+    ROLE_CITIZEN,
 ]
 
 # 학습 설정 (Hyperparameters)
