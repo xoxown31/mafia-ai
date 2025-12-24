@@ -1,12 +1,9 @@
-# main.py
-
 import argparse
 import os
 from core.env import MafiaEnv
 from ai.ppo import PPO
 from ai.reinforce import REINFORCEAgent
 from core.runner import train, test
-# [추가] 분석 모듈 임포트
 from utils.analysis import analyze_log_file
 
 def main():
