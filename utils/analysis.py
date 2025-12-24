@@ -2,6 +2,7 @@ import re
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import numpy as np
+import seaborn as sns
 
 def analyze_log_file(log_path, output_img="analysis_detailed.png"):
     print(f"[Analysis] 로그 파일 분석 중: {log_path}")
@@ -50,6 +51,8 @@ def analyze_log_file(log_path, output_img="analysis_detailed.png"):
     # --- 2. 통계 집계 (Aggregation) ---
     team_wins = {"Mafia": 0, "Citizen": 0}
     char_stats = defaultdict(lambda: {"wins": 0, "total": 0})
+    # 성격별 x 직업별 승률 통계
+    char_role_stats = defaultdict(lambda: defaultdict(lambda: {"wins": 0, "total": 0}))
     
     for game in games:
         winner_team = game['winner']
@@ -69,6 +72,11 @@ def analyze_log_file(log_path, output_img="analysis_detailed.png"):
             char_stats[char]["total"] += 1
             if my_team == winner_team:
                 char_stats[char]["wins"] += 1
+            
+            # 성격별 x 직업별 통계
+            char_role_stats[char][role]["total"] += 1
+            if my_team == winner_team:
+                char_role_stats[char][role]["wins"] += 1
 
     # --- 3. 시각화 (Visualization) ---
     plt.figure(figsize=(15, 6))
@@ -80,28 +88,41 @@ def analyze_log_file(log_path, output_img="analysis_detailed.png"):
     plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140, colors=['#ff9999','#66b3ff'])
     plt.title('Win Rate by Team (Mafia vs Citizen)')
 
-    # (2) 성격별 승률 (Bar Chart)
+    # (2) 성격별 x 직업별 승률 (Heatmap)
     plt.subplot(1, 2, 2)
-    chars = []
-    win_rates = []
     
-    for char, stat in char_stats.items():
-        if stat["total"] > 0:
-            chars.append(char)
-            win_rates.append(stat["wins"] / stat["total"] * 100)
+    # 모든 성격과 직업 수집
+    all_chars = sorted(list(char_role_stats.keys()))
+    all_roles = sorted(list(set(role for char_data in char_role_stats.values() for role in char_data.keys())))
     
-    # 막대 그래프 그리기
-    bars = plt.bar(chars, win_rates, color=['#a3c1ad', '#f4a261', '#e76f51', '#264653'])
-    plt.ylim(0, 100)
-    plt.xlabel('Character Type')
-    plt.ylabel('Win Rate (%)')
-    plt.title('Win Rate by Character Personality')
-    plt.grid(axis='y', alpha=0.3)
+    # 히트맵 데이터 생성 (성격 x 직업)
+    heatmap_data = np.zeros((len(all_chars), len(all_roles)))
     
-    # 막대 위에 수치 표시
-    for bar in bars:
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2.0, height, f'{height:.1f}%', ha='center', va='bottom')
+    for i, char in enumerate(all_chars):
+        for j, role in enumerate(all_roles):
+            stat = char_role_stats[char][role]
+            if stat["total"] > 0:
+                heatmap_data[i, j] = stat["wins"] / stat["total"] * 100
+            else:
+                heatmap_data[i, j] = np.nan  # 데이터 없는 경우
+    
+    # 히트맵 그리기
+    sns.heatmap(heatmap_data, 
+                xticklabels=all_roles, 
+                yticklabels=all_chars,
+                annot=True,  # 셀에 수치 표시
+                fmt='.1f',   # 소수점 한 자리까지 표시
+                cmap='YlOrRd',  # 색상 맵
+                cbar_kws={'label': 'Win Rate (%)'},
+                vmin=0, 
+                vmax=100,
+                linewidths=0.5,
+                linecolor='gray')
+    
+    plt.xlabel('Role')
+    plt.ylabel('Character Type')
+    plt.title('Win Rate by Character × Role')
+    plt.xticks(rotation=45, ha='right')
 
     plt.tight_layout()
     plt.savefig(output_img)

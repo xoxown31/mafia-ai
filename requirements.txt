@@ -28,6 +28,7 @@ pyflakes==3.4.0
 pyparsing==3.3.0
 python-dateutil==2.9.0.post0
 pytokens==0.3.0
+seaborn==0.13.2
 six==1.17.0
 sympy==1.14.0
 torch==2.9.1

@@ -28,9 +28,12 @@ class MafiaGame:
         self.players = []
 
         possible_char_ids = [
-            config.CHAR_RATIONAL,
-            config.CHAR_COPYCAT,
+            config.CHAR_ORATOR,
+            config.CHAR_FOLLOWER,
             config.CHAR_GRUDGER,
+            config.CHAR_ANALYST,
+            config.CHAR_MAVERICK,
+            config.CHAR_COPYCAT,
             config.CHAR_COPYKITTEN,
         ]
 
@@ -97,8 +100,8 @@ class MafiaGame:
             if not p.alive or p.id == 0:
                 continue
 
-            # p.decide_claim(self.players) 호출 (인자로 players 리스트만 넘김)
-            target = p.decide_claim(self.players)
+            # p.decide_claim(self.players, self.day_count) 호출 (day_count 전달)
+            target = p.decide_claim(self.players, self.day_count)
 
             if target != -1:
                 p.claimed_target = target
@@ -109,18 +112,39 @@ class MafiaGame:
 
     def _process_day_discussion(self):
         self._log("  - 토론이 진행되어 의심도가 갱신됩니다.")
-        for speaker in self.players:
-            if not speaker.alive or speaker.claimed_target == -1:
-                continue
-
-            target_idx = speaker.claimed_target
-
-            for listener in self.players:
-                if speaker.id == listener.id or not listener.alive:
-                    continue
-
-                # listener.update_suspicion 호출
-                listener.update_suspicion(speaker, target_idx)
+        
+        # 게임 상태 정보 수집
+        game_status = {
+            'claims': [(speaker.id, speaker.claimed_target) 
+                      for speaker in self.players 
+                      if speaker.alive and speaker.claimed_target != -1],
+            'alive_players': [p.id for p in self.players if p.alive]
+        }
+        
+        # 경찰의 공개 주장이 있는지 확인
+        police_claims = []
+        for p in self.players:
+            if p.alive and p.role == config.ROLE_POLICE and p.should_reveal and p.claimed_target != -1:
+                police_claims.append((p.id, p.claimed_target))
+                self._log(f"  - [중요] 플레이어 {p.id}이(가) 경찰이라 밝히며 {p.claimed_target}이(가) 마피아라고 주장합니다!")
+        
+        # 모든 플레이어의 belief 업데이트
+        for player in self.players:
+            if player.alive:
+                player.update_belief(game_status)
+                
+                # 경찰의 주장이 있으면 시민들은 이를 신뢰
+                for police_id, accused_id in police_claims:
+                    if player.id != police_id and player.id != accused_id:
+                        if player.role != config.ROLE_MAFIA:
+                            # 시민팀은 경찰 주장을 60% 신뢰
+                            player.belief[accused_id, 3] += 60  # 마피아 의심 증가
+                            player.belief[police_id, 1] += 50   # 경찰로 신뢰 증가
+                            self._log(f"  - 플레이어 {player.id}이(가) 경찰의 주장을 들었습니다.")
+                        else:
+                            # 마피아는 경찰을 위협으로 인식
+                            player.belief[police_id, 1] += 80  # 경찰로 확신
+                            self._log(f"  - [마피아] 플레이어 {player.id}이(가) 경찰을 노출로 인식했습니다.")
 
     def _process_day_vote(self, ai_action: int):
         player_count = len(self.players)
@@ -144,7 +168,7 @@ class MafiaGame:
             if not p.alive or p.id == 0:
                 continue
 
-            target = p.decide_vote(self.players)
+            target = p.decide_vote(self.players, self.day_count)
 
             if target != -1:
                 self.vote_counts[target] += 1
@@ -152,6 +176,8 @@ class MafiaGame:
 
                 self.players[target].voted_by_last_turn.append(p.id)
                 self.players[target].vote_history[p.id] += 1
+            else:
+                self._log(f"  - 플레이어 {p.id}이(가) 투표를 기권했습니다.")
 
         self._log(f"  - 최종 투표 집계: {self.vote_counts}")
 
@@ -167,7 +193,8 @@ class MafiaGame:
 
             # AI 투표
             if self.players[0].alive:
-                if self.players[0].suspicion[executed_target] > 0:
+                # 마피아 의심 점수가 양수면 찬성
+                if self.players[0].belief[executed_target, 3] > 0:
                     self.final_vote += 1
                 else:
                     self.final_vote -= 1
@@ -176,7 +203,7 @@ class MafiaGame:
                 if not p.alive or p.id == 0:
                     continue
                 # 봇들 투표 집계
-                if p.suspicion[executed_target] > 0:
+                if p.belief[executed_target, 3] > 0:
                     self.final_vote += 1
                 else:
                     self.final_vote -= 1
@@ -190,9 +217,19 @@ class MafiaGame:
             else:
                 self._log(f"  - 투표 결과: 반대 {abs(self.final_vote)}표")
 
+            # 게임 상태 업데이트 (투표 결과 반영)
+            game_status_vote = {
+                'vote_results': [(p.id, p.claimed_target) 
+                                for p in self.players 
+                                if p.alive and p.claimed_target != -1],
+                'alive_players': [p.id for p in self.players if p.alive]
+            }
+            
+            # 처형 결과를 belief에 반영
             for p in self.players:
-                # 죽은 사람 의심도 초기화 (Logit을 매우 낮게 설정)
-                p.suspicion[executed_target] = -100
+                if p.alive:
+                    # 죽은 사람의 모든 직업 점수 초기화
+                    p.belief[executed_target] = [-100, -100, -100, -100]
 
         self._update_alive_status()
 
@@ -256,9 +293,14 @@ class MafiaGame:
                 )
 
                 if self.players[target].role == config.ROLE_MAFIA:
-                    police.suspicion[target] = 100  # 확신
+                    # 마피아로 확정
+                    police.belief[target, 3] = 100  # 마피아 확신
+                    police.belief[target, 0] = -100  # 시민 아님
+                    police.confirmed_mafia.add(target)  # 확인된 마피아에 추가
                 else:
-                    police.suspicion[target] = -100  # 확신
+                    # 시민으로 확정 (경찰, 의사, 시민 중 하나)
+                    police.belief[target, 3] = -100  # 마피아 아님
+                    police.belief[target, 0] = 50  # 시민일 가능성
 
         # 결과 정산
         if mafia_target is not None:
@@ -296,6 +338,11 @@ class MafiaGame:
         citizen_count = sum(
             1 for p in self.players if p.role != config.ROLE_MAFIA and p.alive
         )
+
+        # 무승부 조건: 최대 턴 수 초과
+        if self.day_count > config.MAX_DAYS:
+            self._log(f"\n게임 종료: {config.MAX_DAYS}일이 지나 무승부입니다!")
+            return True, False  # 무승부는 패배로 처리
 
         if mafia_count == 0:
             self._log(f"\n게임 종료: 마피아가 모두 사망했습니다. 시민 팀 승리!")
