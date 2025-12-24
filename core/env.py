@@ -32,9 +32,10 @@ class MafiaEnv(gym.Env):
         return self._encode_observation(status), {}
 
     def step(self, action):
-        prev_alive = [p.alive for p in self.game.players]
         my_id = self.game.players[0].id
         my_role = self.game.players[my_id].role
+        prev_alive = [p.alive for p in self.game.players]
+
         status, done, win = self.game.process_turn(action)
 
         # 보상 계산
