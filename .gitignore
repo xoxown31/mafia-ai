@@ -27,6 +27,7 @@ data/
 *.pt
 *.pth
 mafia_game_log.txt
+result.png
 
 # Jupyter Notebook
 .ipynb_checkpoints
