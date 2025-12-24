@@ -103,6 +103,9 @@ class MafiaGame:
             if target != -1:
                 p.claimed_target = target
                 self._log(f"  - 플레이어 {p.id}이(가) {target}을(를) 지목했습니다.")
+            else:
+                p.claimed_target = -1
+                self._log(f"  - 플레이어 {p.id}이(가) 아무도 지목하지 않았습니다.")
 
     def _process_day_discussion(self):
         self._log("  - 토론이 진행되어 의심도가 갱신됩니다.")
