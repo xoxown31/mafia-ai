@@ -16,18 +16,20 @@ class CopyCat(RationalCharacter):
 
         # [용서]
         if alive_non_attackers:
-            FORGIVENESS_LOGIT = 10
+            FORGIVENESS_SCORE = 10
             for pid in alive_non_attackers:
-                self.suspicion_logits[pid] -= FORGIVENESS_LOGIT
+                # suspicion_logits -> suspicion
+                self.suspicion[pid] -= FORGIVENESS_SCORE 
 
         # [복수]
         if alive_attackers:
-            RETALIATION_LOGIT = 40
-            penalty = RETALIATION_LOGIT / len(alive_attackers)
+            RETALIATION_SCORE = 40
+            penalty = RETALIATION_SCORE / len(alive_attackers)
             for pid in alive_attackers:
-                self.suspicion_logits[pid] += penalty
+                # suspicion_logits -> suspicion
+                self.suspicion[pid] += penalty
 
         return super().decide_claim(players)
-
+    
     def decide_vote(self, players: List["BaseCharacter"]) -> int:
         return super().decide_claim(players)

@@ -162,7 +162,7 @@ class MafiaGame:
 
             for p in self.players:
                 # 죽은 사람 의심도 초기화 (Logit을 매우 낮게 설정)
-                p.suspicion_logits[executed_target] = -100
+                p.suspicion[executed_target] = -100
 
         self._update_alive_status()
 
@@ -226,9 +226,9 @@ class MafiaGame:
                 )
 
                 if self.players[target].role == config.ROLE_MAFIA:
-                    police.suspicion_logits[target] = 100  # 확신
+                    police.suspicion[target] = 100  # 확신
                 else:
-                    police.suspicion_logits[target] = -100  # 확신
+                    police.suspicion[target] = -100  # 확신
 
         # 결과 정산
         if mafia_target is not None:
