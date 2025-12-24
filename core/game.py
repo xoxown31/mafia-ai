@@ -15,6 +15,7 @@ class MafiaGame:
         self.alive_status = []
         self.vote_counts = []
         self.log_file = log_file
+        self.final_vote = 0
 
     def _log(self, message):
         if self.log_file:
@@ -149,16 +150,42 @@ class MafiaGame:
                 self.players[target].voted_by_last_turn.append(p.id)
                 self.players[target].vote_history[p.id] += 1
 
+        self._log(f"  - 최종 투표 집계: {self.vote_counts}")
+
         # 처형 집행
         max_votes = max(self.vote_counts)
+        self.final_vote = 0
         if max_votes > 0:
             executed_targets = [
                 i for i, v in enumerate(self.vote_counts) if v == max_votes
             ]
+
             executed_target = random.choice(executed_targets)
-            self.players[executed_target].alive = False
-            self._log(f"  - 투표 결과: {self.vote_counts}")
-            self._log(f"  - {executed_target}번 플레이어가 처형되었습니다.")
+
+            # AI 투표
+            if self.players[0].alive:
+                if self.players[0].suspicion[executed_target] > 0:
+                    self.final_vote += 1
+                else:
+                    self.final_vote -= 1
+
+            for p in self.players:
+                if not p.alive or p.id == 0:
+                    continue
+                # 봇들 투표 집계
+                if p.suspicion[executed_target] > 0:
+                    self.final_vote += 1
+                else:
+                    self.final_vote -= 1
+
+            if self.final_vote > 0:
+                self.players[executed_target].alive = False
+                self._log(f"  - 투표 결과: 찬성 {self.final_vote}표")
+                self._log(f"  - {executed_target}번 플레이어가 처형되었습니다.")
+            elif self.final_vote == 0:
+                self._log(f"  - 투표 결과: 찬반 동수로 처형이 무산되었습니다.")
+            else:
+                self._log(f"  - 투표 결과: 반대 {abs(self.final_vote)}표")
 
             for p in self.players:
                 # 죽은 사람 의심도 초기화 (Logit을 매우 낮게 설정)
