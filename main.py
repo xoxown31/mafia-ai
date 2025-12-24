@@ -20,7 +20,7 @@ def main():
     with open(log_file_path, "w", encoding="utf-8") as f:
         # 환경 및 에이전트 초기화
         env = MafiaEnv(log_file=f)
-        state_dim = env.observation_space.shape[0]
+        state_dim = env.observation_space['observation'].shape[0]
         action_dim = env.action_space.n
 
         if args.agent == 'ppo':

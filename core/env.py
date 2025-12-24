@@ -63,8 +63,12 @@ class MafiaEnv(gym.Env):
                 if i == my_id:
                     mask[i] = 0
 
+            elif phase == config.PHASE_DAY_CLAIM:
+                if i == my_id:
+                    mask[i] = 0
+
             # 2. 밤 행동 제약
-            if phase == config.PHASE_NIGHT:
+            elif phase == config.PHASE_NIGHT:
                 # 밤에는 자기 자신 지목 불가
                 if my_role == config.ROLE_MAFIA:
                     if self.game.players[i].role == config.ROLE_MAFIA:

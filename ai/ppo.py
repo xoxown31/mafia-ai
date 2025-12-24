@@ -27,20 +27,43 @@ class PPO:
 
     def select_action(self, state):
         """
-        상태를 받아 행동을 결정하고, 데이터(State, Action, LogProb)를 버퍼에 저장
+        상태(Dict)를 받아 마스킹을 적용한 후 행동을 결정
         """
-        with torch.no_grad():
-            state = torch.FloatTensor(state)
-            # action_probs, _ = self.policy_old(state) # Critic 값은 여기서 안 씀
-            # policy_old를 사용하여 행동 결정 (학습 중인 policy가 아님에 주의)
-            action_probs, _ = self.policy_old(state)
+        # 1. Dict에서 관측값과 마스크 분리
+        if isinstance(state, dict):
+            obs = state['observation']
+            mask = state['action_mask']
+        else:
+            obs = state
+            mask = None
             
+        with torch.no_grad():
+            state_tensor = torch.FloatTensor(obs)
+            # 마스크도 텐서로 변환
+            mask_tensor = torch.FloatTensor(mask) if mask is not None else None
+            
+            action_probs, _ = self.policy_old(state_tensor)
+            
+            # 2. 마스킹 적용
+            if mask_tensor is not None:
+                # 불가능한 행동(0)의 확률을 0으로 만듦
+                action_probs = action_probs * mask_tensor
+                
+                # 확률 재정규화 (Sum to 1)
+                action_probs_sum = action_probs.sum()
+                if action_probs_sum > 0:
+                    action_probs /= action_probs_sum
+                else:
+                    # 예외 처리: 모든 행동이 불가능한 경우(버그 등) 균등 분포 등 처리 필요
+                    print("Warning: All actions masked out!")
+                    action_probs = mask_tensor / mask_tensor.sum()
+
             dist = Categorical(action_probs)
             action = dist.sample()
             action_logprob = dist.log_prob(action)
             
-        # 버퍼에 저장
-        self.buffer.states.append(state)
+        # 버퍼에 저장 (관측값만 저장할지, 딕셔너리 통째로 저장할지 결정 필요. 보통 관측값만 저장)
+        self.buffer.states.append(state_tensor) 
         self.buffer.actions.append(action)
         self.buffer.logprobs.append(action_logprob)
         

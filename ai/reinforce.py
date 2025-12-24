@@ -18,19 +18,43 @@ class REINFORCEAgent:
 
     def select_action(self, state):
         """
-        상태를 받아서 행동을 결정하고, 그 확률(log_prob)을 저장함
+        상태(Dict)를 받아서 마스킹 처리 후 행동을 결정하고, 그 확률(log_prob)을 저장함
         """
-        # 1. 텐서 변환 (배치 차원 추가: [State] -> [1, State])
-        state = torch.FloatTensor(state).unsqueeze(0)
+        # 1. 딕셔너리 처리 (관측값과 마스크 분리)
+        if isinstance(state, dict):
+            obs = state['observation']
+            mask = state['action_mask']
+        else:
+            obs = state
+            mask = None
+
+        # 2. 텐서 변환 (배치 차원 추가: [State] -> [1, State])
+        state_tensor = torch.FloatTensor(obs).unsqueeze(0)
         
-        # 2. 모델 통과 (Critic 값은 REINFORCE에서 무시)
-        probs, _ = self.policy(state)
+        # 마스크도 텐서로 변환 (배치 차원 추가)
+        if mask is not None:
+            mask_tensor = torch.FloatTensor(mask).unsqueeze(0)
+        else:
+            mask_tensor = None
         
-        # 3. 확률 분포 생성 및 샘플링
+        # 3. 모델 통과 (Critic 값은 REINFORCE에서 무시)
+        probs, _ = self.policy(state_tensor)
+        
+        # 4. 액션 마스킹 적용
+        if mask_tensor is not None:
+            # 불가능한 행동(0)의 확률을 0으로 만듦
+            probs = probs * mask_tensor
+            
+            # 확률 합이 1이 되도록 재정규화 (Sum to 1)
+            total_prob = probs.sum(dim=-1, keepdim=True)
+            # 0으로 나누는 것을 방지하기 위해 아주 작은 값(1e-8)을 더함
+            probs = probs / (total_prob + 1e-8)
+        
+        # 5. 확률 분포 생성 및 샘플링
         dist = Categorical(probs)
         action = dist.sample()
         
-        # 4. 나중에 학습할 때 쓰려고 Log 확률 저장
+        # 6. 나중에 학습할 때 쓰려고 Log 확률 저장
         self.log_probs.append(dist.log_prob(action))
         
         return action.item()
