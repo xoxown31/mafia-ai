@@ -32,10 +32,27 @@ class MafiaEnv(gym.Env):
         return self._encode_observation(status), {}
 
     def step(self, action):
+        prev_alive = [p.alive for p in self.game.players]
+        my_id = self.game.players[0].id
+        my_role = self.game.players[my_id].role
         status, done, win = self.game.process_turn(action)
 
         # 보상 계산
         reward = 0.0
+
+        if self.game.players[my_id].alive:
+            # 직업별 보상 계산
+            if my_role == config.ROLE_CITIZEN:
+                reward += self._calculate_citizen_reward(action)
+            elif my_role == config.ROLE_MAFIA:
+                reward += self._calculate_mafia_reward(action)
+            elif my_role == config.ROLE_POLICE:
+                reward += self._calculate_citizen_reward(action)
+                reward += self._calculate_police_reward(action)
+            elif my_role == config.ROLE_DOCTOR:
+                reward += self._calculate_citizen_reward(action)
+                reward += self._calculate_doctor_reward(prev_alive)
+
         if status["alive_status"][0]:
             reward += 0.1
         else:
@@ -79,6 +96,66 @@ class MafiaEnv(gym.Env):
                         mask[i] = 0
 
         return mask
+
+    def _calculate_citizen_reward(self, action):
+        phase = self.game.phase
+        # 주장 단계에 대한 보상
+        reward = 0.0
+        if phase == config.PHASE_DAY_CLAIM:
+            if self.game.players[action].role == config.ROLE_MAFIA:
+                reward += 1.0
+            else:
+                reward -= 1.0
+        # 투표 단계에 대한 보상
+        elif phase == config.PHASE_DAY_VOTE:
+            if self.game.players[action].role == config.ROLE_MAFIA:
+                reward += 3.0
+            else:
+                reward -= 1.0
+        return reward
+
+    def _calculate_mafia_reward(self, action):
+        phase = self.game.phase
+        reward = 0.0
+        if phase == config.PHASE_DAY_CLAIM:
+            if (
+                self.game.players[action].role == config.ROLE_POLICE
+                or self.game.players[action].role == config.ROLE_DOCTOR
+            ):
+                reward += 1.0
+        elif phase == config.PHASE_DAY_VOTE:
+            if (
+                self.game.players[action].role == config.ROLE_POLICE
+                or self.game.players[action].role == config.ROLE_DOCTOR
+            ):
+                reward += 3.0
+        elif phase == config.PHASE_NIGHT:
+            if (
+                self.game.players[action].role == config.ROLE_POLICE
+                or self.game.players[action].role == config.ROLE_DOCTOR
+            ):
+                reward += 3.0
+            else:
+                reward -= 1.0
+        return reward
+
+    def _calculate_police_reward(self, action):
+        reward = 0.0
+        phase = self.game.phase
+        if phase == config.PHASE_NIGHT:
+            if self.game.players[action].role == config.ROLE_MAFIA:
+                reward += 5.0
+        return reward
+
+    def _calculate_doctor_reward(self, prev_alive):
+        reward = 0.0
+        phase = self.game.phase
+        if phase == config.PHASE_DAY_CLAIM:
+            if sum(prev_alive) == sum(self.game.alive_status):
+                reward += 3.0
+            else:
+                reward -= 1.0
+        return reward
 
     def _encode_observation(self, status):
         # 1. 관찰 정보 생성
