@@ -15,7 +15,7 @@ class CopyKitten(RationalCharacter):
         if repeat_offenders:
             RETALIATION_LOGIT = 50
             for pid in repeat_offenders:
-                self.suspicion_logits[pid] += RETALIATION_LOGIT
+                self.suspicion[pid] += RETALIATION_LOGIT
 
         return super().decide_claim(players)
 

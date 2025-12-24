@@ -10,7 +10,7 @@ class Grudger(RationalCharacter):
         if alive_attackers:
             RETALIATION_LOGIT = 100
             for pid in alive_attackers:
-                self.suspicion_logits[pid] += RETALIATION_LOGIT
+                self.suspicion[pid] += RETALIATION_LOGIT
 
         return super().decide_claim(players)
 
