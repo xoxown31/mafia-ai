@@ -374,7 +374,19 @@ class MafiaLogViewerApp:
         left_frame = ttk.Frame(paned, width=250)
         paned.add(left_frame, weight=1)
 
-        ttk.Label(left_frame, text="에피소드 목록").pack(pady=5)
+        # [신규 추가] 상단 헤더 프레임 (라벨 + 새로고침 버튼)
+        header_frame = ttk.Frame(left_frame)
+        header_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(header_frame, text="에피소드 목록").pack(side=tk.LEFT)
+
+        # 목록 새로고침 버튼 추가
+        btn_refresh_list = ttk.Button(
+            header_frame, text="새로고침", width=8, command=self.refresh_episode_list
+        )
+        btn_refresh_list.pack(side=tk.RIGHT)
+
+        # 리스트박스 및 스크롤바
         list_scroll = ttk.Scrollbar(left_frame)
         list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
