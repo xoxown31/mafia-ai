@@ -5,6 +5,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import re
 import os
 from collections import defaultdict
+from utils.analysis import parse_game_data
 
 # [설정] 현재 파일 위치 기준으로 logs 폴더 찾기 (절대 경로)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -83,75 +84,83 @@ class MafiaLogViewerApp:
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
     def refresh_stats(self):
-        # (기존 통계 코드는 동일하게 유지)
+        """analysis.py의 로직을 재사용하여 통계 갱신"""
         for widget in self.chart_frame.winfo_children():
             widget.destroy()
 
-        if not os.path.exists(self.log_file_path):
-            ttk.Label(self.chart_frame, text="로그 파일이 없습니다.").pack()
+        # [핵심] 직접 파싱하지 않고 analysis.py의 함수 호출!
+        games = parse_game_data(self.log_file_path)
+
+        if not games:
+            ttk.Label(self.chart_frame, text="데이터가 없습니다.").pack()
             return
 
+        # 데이터를 뷰어 형식에 맞게 집계 (직업별 승률)
         stats = defaultdict(lambda: {"wins": 0, "total": 0})
-        try:
-            with open(self.log_file_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            episodes = content.split("Episode")
-            for ep_chunk in episodes:
-                if "End" not in ep_chunk:
-                    continue
-                winner = None
-                if "시민 팀 승리" in ep_chunk:
-                    winner = "Citizen"
-                elif "마피아 승리" in ep_chunk:
-                    winner = "Mafia"
-                if not winner:
-                    continue
-                players = re.findall(r"플레이어 \d+: (\w+) \(", ep_chunk)
-                for role in players:
-                    stats[role]["total"] += 1
-                    is_mafia_role = role == "MAFIA"
-                    if (winner == "Mafia" and is_mafia_role) or (
-                        winner == "Citizen" and not is_mafia_role
-                    ):
-                        stats[role]["wins"] += 1
 
-            roles = sorted(stats.keys())
-            win_rates = [
-                (
-                    (stats[r]["wins"] / stats[r]["total"] * 100)
-                    if stats[r]["total"] > 0
-                    else 0
-                )
-                for r in roles
-            ]
-            color_map = {
-                "MAFIA": "#ff9999",
-                "CITIZEN": "#99ff99",
-                "POLICE": "#66b3ff",
-                "DOCTOR": "#ffcc99",
-            }
-            colors = [color_map.get(r, "#cccccc") for r in roles]
+        for game in games:
+            winner = game["winner"]
+            if not winner:
+                continue
 
-            fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
-            bars = ax.bar(roles, win_rates, color=colors)
-            ax.set_ylim(0, 100)
-            ax.set_title("직업별 승률")
-            ax.set_ylabel("승률 (%)")
-            for bar in bars:
-                height = bar.get_height()
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2.0,
-                    height + 1,
-                    f"{height:.1f}%",
-                    ha="center",
-                    va="bottom",
-                )
-            canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            for pid, role in game["roles"].items():
+                stats[role]["total"] += 1
 
-        except Exception as e:
-            ttk.Label(self.chart_frame, text=f"오류: {e}").pack()
+                is_mafia_role = role == "MAFIA"
+                if (winner == "Mafia" and is_mafia_role) or (
+                    winner == "Citizen" and not is_mafia_role
+                ):
+                    stats[role]["wins"] += 1
+
+        # 그래프 그리기
+        self._draw_chart(stats)
+
+    def _draw_chart(self, stats):
+        """통계 데이터를 바탕으로 그래프를 그리는 함수"""
+        if not stats:
+            ttk.Label(self.chart_frame, text="데이터가 없습니다.").pack()
+            return
+
+        roles = sorted(stats.keys())
+        # 승률 계산
+        win_rates = [
+            (stats[r]["wins"] / stats[r]["total"] * 100) if stats[r]["total"] > 0 else 0
+            for r in roles
+        ]
+
+        # 색상 설정
+        color_map = {
+            "MAFIA": "#ff9999",
+            "CITIZEN": "#99ff99",
+            "POLICE": "#66b3ff",
+            "DOCTOR": "#ffcc99",
+        }
+        colors = [color_map.get(r, "#cccccc") for r in roles]
+
+        # Matplotlib 그래프 생성
+        fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
+        bars = ax.bar(roles, win_rates, color=colors)
+
+        ax.set_ylim(0, 100)
+        ax.set_title("직업별 승률")
+        ax.set_ylabel("승률 (%)")
+        ax.grid(axis="y", linestyle="--", alpha=0.7)
+
+        # 막대 위에 수치 표시
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height + 1,
+                f"{height:.1f}%",
+                ha="center",
+                va="bottom",
+            )
+
+        # Tkinter 창에 그래프 삽입
+        canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def refresh_episode_list(self):
         """
