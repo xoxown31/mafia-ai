@@ -37,6 +37,10 @@ class RationalCharacter(BaseCharacter):
         self.healed_players = set()
         self.no_death_nights = []
         
+        # Parrot Prevention: Track what was said today
+        self.said_today = set()
+        self.last_tracked_day = 0
+        
         initial_belief = 25.0
         self.belief = np.full((config.PLAYER_COUNT, 4), initial_belief, dtype=np.float32)
         
@@ -53,6 +57,11 @@ class RationalCharacter(BaseCharacter):
         execution_result = game_status.get('execution_result', None)
         night_result = game_status.get('night_result', None)
         current_day = game_status.get('day', 1)
+        
+        # Reset said_today when a new day starts
+        if current_day != self.last_tracked_day:
+            self.said_today = set()
+            self.last_tracked_day = current_day
         
         for claim in claims:
             speaker_id = claim.get('speaker_id')
@@ -297,31 +306,45 @@ class RationalCharacter(BaseCharacter):
         
         self.committed_target = -1
         
-        # Role-specific counter-strategies (context-aware)
+        # Generate claim based on priority:
+        # 1. Role-specific counter-strategies (context-aware)
+        # 2. General counter-claim (role conflict)
+        # 3. Normal role-based strategy
+        claim = None
+        
         if discussion_context:
             if self.role == config.ROLE_MAFIA:
-                mafia_counter = self._check_mafia_counter_claim(alive_ids, discussion_context, players)
-                if mafia_counter:
-                    return mafia_counter
+                claim = self._check_mafia_counter_claim(alive_ids, discussion_context, players)
             elif self.role == config.ROLE_DOCTOR:
-                doctor_save = self._check_doctor_super_save(alive_ids, discussion_context, players)
-                if doctor_save:
-                    return doctor_save
+                claim = self._check_doctor_super_save(alive_ids, discussion_context, players)
         
-        counter_claim = self._check_counter_claim(alive_ids)
-        if counter_claim:
-            return counter_claim
+        if not claim:
+            claim = self._check_counter_claim(alive_ids)
         
-        if self.role == config.ROLE_POLICE:
-            return self._police_claim_strategy(players, alive_ids, current_day)
-        elif self.role == config.ROLE_DOCTOR:
-            return self._doctor_claim_strategy(players, alive_ids, current_day)
-        elif self.role == config.ROLE_CITIZEN:
-            return self._citizen_claim_strategy(alive_ids, current_day)
-        elif self.role == config.ROLE_MAFIA:
-            return self._mafia_claim_strategy(players, alive_ids, current_day)
+        if not claim:
+            # Generate claim based on role
+            if self.role == config.ROLE_POLICE:
+                claim = self._police_claim_strategy(players, alive_ids, current_day)
+            elif self.role == config.ROLE_DOCTOR:
+                claim = self._doctor_claim_strategy(players, alive_ids, current_day)
+            elif self.role == config.ROLE_CITIZEN:
+                claim = self._citizen_claim_strategy(alive_ids, current_day)
+            elif self.role == config.ROLE_MAFIA:
+                claim = self._mafia_claim_strategy(players, alive_ids, current_day)
         
-        return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
+        if not claim:
+            return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
+        
+        # Parrot Prevention: Check if already said this claim today (applies to ALL claims)
+        if claim["type"] != "NO_ACTION":
+            claim_signature = (claim["type"], claim["reveal_role"], claim["target_id"], claim["assertion"])
+            if claim_signature in self.said_today:
+                # Already said this - stay silent
+                return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
+            # Record this claim
+            self.said_today.add(claim_signature)
+        
+        return claim
     
     def _check_counter_claim(self, alive_ids: List[int]) -> Dict:
         """Check if someone claimed my role and return counter-claim if needed."""
@@ -449,10 +472,8 @@ class RationalCharacter(BaseCharacter):
                     "assertion": "CONFIRMED_MAFIA"
                 }
         
-        if current_day <= 2:
-            return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
-        
-        return self._claim_with_silence_threshold(alive_ids)
+        # Use silence threshold with early game caution
+        return self._claim_with_silence_threshold(alive_ids, current_day)
     
     def _doctor_claim_strategy(self, players: List["BaseCharacter"], 
                               alive_ids: List[int], current_day: int) -> Dict:
@@ -487,10 +508,8 @@ class RationalCharacter(BaseCharacter):
                     "assertion": "CONFIRMED_CITIZEN"
                 }
         
-        if current_day <= 2:
-            return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
-        
-        return self._claim_with_silence_threshold(alive_ids)
+        # Use silence threshold with early game caution
+        return self._claim_with_silence_threshold(alive_ids, current_day)
     
     def _find_best_citizen_to_vouch(self, alive_ids: List[int]) -> int:
         """Find the best citizen to vouch for."""
@@ -503,12 +522,19 @@ class RationalCharacter(BaseCharacter):
         citizen_scores.sort(key=lambda x: x[1], reverse=True)
         return citizen_scores[0][0] if citizen_scores else None
     
-    def _claim_with_silence_threshold(self, alive_ids: List[int]) -> Dict:
-        """Make a claim only if suspicion exceeds silence threshold."""
+    def _claim_with_silence_threshold(self, alive_ids: List[int], current_day: int = 1) -> Dict:
+        """Make a claim only if suspicion exceeds silence threshold.
+        
+        Early game (Day 1-2): Higher threshold (more cautious)
+        Later game: Normal threshold (more aggressive)
+        """
         mafia_scores = [(pid, self.belief[pid, config.ROLE_MAFIA]) for pid in alive_ids]
         mafia_scores.sort(key=lambda x: x[1], reverse=True)
         
-        silence_threshold = 40.0 * self.aggressiveness
+        # Early game aggression: 1.5x threshold in days 1-2
+        base_threshold = 40.0 * self.aggressiveness
+        silence_threshold = base_threshold * (1.5 if current_day <= 2 else 1.0)
+        
         if mafia_scores[0][1] > silence_threshold:
             self.committed_target = mafia_scores[0][0]
             return {
@@ -519,14 +545,10 @@ class RationalCharacter(BaseCharacter):
             }
         
         return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
-        return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
     
     def _citizen_claim_strategy(self, alive_ids: List[int], current_day: int) -> Dict:
-        """Citizen claim strategy."""
-        if current_day <= 2:
-            return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
-        
-        return self._claim_with_silence_threshold(alive_ids)
+        """Citizen claim strategy with early game caution."""
+        return self._claim_with_silence_threshold(alive_ids, current_day)
     
     def _mafia_claim_strategy(self, players: List["BaseCharacter"], 
                              alive_ids: List[int], current_day: int) -> Dict:
