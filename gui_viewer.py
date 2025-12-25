@@ -1,3 +1,4 @@
+import sys  # [추가] 프로세스 강제 종료를 위해 필요
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import matplotlib.pyplot as plt
@@ -59,6 +60,16 @@ class MafiaLogViewerApp:
 
         # 시작 시 리플레이 목록 로딩
         self.root.after(100, self.refresh_episode_list)
+
+        # X 버튼(창 닫기)을 누르면 on_closing 함수 실행
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    # 종료 처리 함수
+    def on_closing(self):
+        plt.close("all")
+        self.root.quit()
+        self.root.destroy()
+        sys.exit(0)
 
     # ------------------------------------------------------------------
     # 탭 1: 팀별 승률 (Pie Chart) + AI 역할별 상세 승률
