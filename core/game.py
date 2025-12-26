@@ -89,18 +89,12 @@ class MafiaGame:
         
         player_name = f"AI({player_id})" if player_id == 0 else f"플레이어 {player_id}"
         
-        if reveal_role != -1 and target_id != -1 and accused_role != -1:
-            my_role_name = role_names.get(reveal_role, "알 수 없음")
-            accused_role_name = role_names.get(accused_role, "알 수 없음")
-            self._log(f"  - {player_name}이(가) 자신이 {my_role_name}이라 밝히며 {target_id}번이 {accused_role_name}이라고 지목했습니다.")
-        elif reveal_role != -1:
+        if reveal_role != -1 and target_id == -1:
             my_role_name = role_names.get(reveal_role, "알 수 없음")
             self._log(f"  - {player_name}이(가) 자신이 {my_role_name}이라고 밝혔습니다.")
         elif target_id != -1 and accused_role != -1:
             accused_role_name = role_names.get(accused_role, "알 수 없음")
             self._log(f"  - {player_name}이(가) {target_id}번이 {accused_role_name}이라고 지목했습니다.")
-        elif target_id != -1:
-            self._log(f"  - {player_name}이(가) {target_id}번을 지목했습니다.")
         else:
             self._log(f"  - {player_name}이(가) 침묵했습니다.")
 
@@ -119,7 +113,7 @@ class MafiaGame:
                     continue
                 
                 if p.id == 0:
-                    if reveal_role != -1 or target_id != -1 or accused_role != -1:
+                    if reveal_role != -1 or (target_id != -1 and accused_role != -1):
                         all_silent = False
                         claim_dict = {
                             "speaker_id": 0,
