@@ -58,13 +58,7 @@ class MafiaGame:
         self.alive_status = [True for _ in range(config.PLAYER_COUNT)]
         return self._get_game_status()
 
-    def process_turn(self, ai_claim_role: int, ai_target_id: int, ai_accused_role: int) -> Tuple[Dict, bool, bool]:
-        """
-        새로운 액션 구조:
-        - ai_claim_role: AI가 주장하는 자신의 역할 (-1: 주장 없음, 0-3: 역할)
-        - ai_target_id: AI가 지목하는 대상 플레이어 ID (-1: 지목 없음)
-        - ai_accused_role: AI가 지목하는 대상의 추정 역할 (-1: 지정 없음, 0-3: 역할)
-        """
+    def process_turn(self, reveal_role: int, target_id: int, accused_role: int) -> Tuple[Dict, bool, bool]:
         is_over, is_win = self.check_game_over()
         if is_over:
             return self._get_game_status(), is_over, is_win
@@ -72,21 +66,20 @@ class MafiaGame:
         self._log(f"\n[Day {self.day_count} | {self.phase}]")
 
         if self.phase == config.PHASE_DAY_DISCUSSION:
-            self._process_day_discussion(ai_claim_role, ai_target_id, ai_accused_role)
+            self._process_day_discussion(reveal_role, target_id, accused_role)
             self.phase = config.PHASE_DAY_VOTE
         elif self.phase == config.PHASE_DAY_VOTE:
-            self._process_day_vote(ai_target_id)
+            self._process_day_vote(target_id)
             self.phase = config.PHASE_NIGHT
         elif self.phase == config.PHASE_NIGHT:
-            self.night_turn(ai_target_id)
+            self.night_turn(target_id)
             self.phase = config.PHASE_DAY_DISCUSSION
             self.day_count += 1
 
         is_over, is_win = self.check_game_over()
         return self._get_game_status(), is_over, is_win
 
-    def _log_claim(self, player_id: int, claim_role: int, target_id: int, accused_role: int):
-        """역할 주장과 지목을 로깅하는 헬퍼 함수"""
+    def _log_claim(self, player_id: int, reveal_role: int, target_id: int, accused_role: int):
         role_names = {
             config.ROLE_CITIZEN: "시민",
             config.ROLE_POLICE: "경찰",
@@ -96,33 +89,22 @@ class MafiaGame:
         
         player_name = f"AI({player_id})" if player_id == 0 else f"플레이어 {player_id}"
         
-        if claim_role != -1 and target_id != -1 and accused_role != -1:
-            # 밝히기 + 역할 지목
-            my_role_name = role_names.get(claim_role, "알 수 없음")
+        if reveal_role != -1 and target_id != -1 and accused_role != -1:
+            my_role_name = role_names.get(reveal_role, "알 수 없음")
             accused_role_name = role_names.get(accused_role, "알 수 없음")
             self._log(f"  - {player_name}이(가) 자신이 {my_role_name}이라 밝히며 {target_id}번이 {accused_role_name}이라고 지목했습니다.")
-        elif claim_role != -1:
-            # 밝히기만
-            my_role_name = role_names.get(claim_role, "알 수 없음")
+        elif reveal_role != -1:
+            my_role_name = role_names.get(reveal_role, "알 수 없음")
             self._log(f"  - {player_name}이(가) 자신이 {my_role_name}이라고 밝혔습니다.")
         elif target_id != -1 and accused_role != -1:
-            # 역할 지목만
             accused_role_name = role_names.get(accused_role, "알 수 없음")
             self._log(f"  - {player_name}이(가) {target_id}번이 {accused_role_name}이라고 지목했습니다.")
         elif target_id != -1:
-            # 단순 지목 (역할 언급 없음)
             self._log(f"  - {player_name}이(가) {target_id}번을 지목했습니다.")
         else:
-            # 침묵
             self._log(f"  - {player_name}이(가) 침묵했습니다.")
 
-    def _process_day_discussion(self, ai_claim_role: int, ai_target_id: int, ai_accused_role: int):
-        """
-        새로운 토론 단계: AI도 토론 루프에 포함하여 RBA와 동등하게 처리
-        - ai_claim_role: AI가 주장하는 자신의 역할 (-1: 주장 없음)
-        - ai_target_id: AI가 지목하는 플레이어 ID (-1: 지목 없음)
-        - ai_accused_role: AI가 target_id에게 지목하는 역할 (-1: 역할 언급 없음)
-        """
+    def _process_day_discussion(self, reveal_role: int, target_id: int, accused_role: int):
         self._log("  - 낮 토론: 플레이어들이 의견을 나누고 의심도를 갱신합니다.")
         
         structured_claims = []
@@ -132,43 +114,39 @@ class MafiaGame:
             round_claims = []
             all_silent = True
             
-            # 모든 플레이어를 동일한 루프에서 처리 (AI 포함)
             for p in self.players:
                 if not p.alive:
                     continue
                 
                 if p.id == 0:
-                    # AI 처리
-                    if ai_claim_role != -1 or ai_target_id != -1 or ai_accused_role != -1:
+                    if reveal_role != -1 or target_id != -1 or accused_role != -1:
                         all_silent = False
                         claim_dict = {
                             "speaker_id": 0,
                             "type": "CLAIM",
-                            "reveal_role": ai_claim_role,
-                            "target_id": ai_target_id,
-                            "accused_role": ai_accused_role
+                            "reveal_role": reveal_role,
+                            "target_id": target_id,
+                            "accused_role": accused_role
                         }
                         round_claims.append(claim_dict)
                         structured_claims.append(claim_dict)
                         
-                        p.claimed_role = ai_claim_role
-                        p.claimed_target = ai_target_id
+                        p.claimed_role = reveal_role
+                        p.claimed_target = target_id
                         
-                        self._log_claim(0, ai_claim_role, ai_target_id, ai_accused_role)
+                        self._log_claim(0, reveal_role, target_id, accused_role)
                     else:
                         p.claimed_role = -1
                         p.claimed_target = -1
                         if debate_round == 0:
                             self._log("  - AI(0)이(가) 침묵했습니다.")
                 else:
-                    # RBA 처리
                     claim_dict = p.decide_claim(self.players, self.day_count, structured_claims)
                     
                     if claim_dict["type"] == "CLAIM":
                         all_silent = False
                         claim_dict["speaker_id"] = p.id
                         
-                        # accused_role 추가 (RBA도 역할 지목 가능하도록 수정 필요)
                         if "accused_role" not in claim_dict:
                             claim_dict["accused_role"] = -1
                         
@@ -186,7 +164,6 @@ class MafiaGame:
                         if debate_round == 0:
                             self._log(f"  - 플레이어 {p.id}이(가) 침묵했습니다.")
             
-            # 각 라운드 후 belief 업데이트
             if round_claims:
                 game_status = {
                     'claims': round_claims,
@@ -200,13 +177,11 @@ class MafiaGame:
                     if player.alive:
                         player.update_belief(game_status)
             
-            # 모두 침묵하면 토론 종료
             if all_silent:
                 if debate_round > 0:
                     self._log(f"  - [토론 종료] 모든 플레이어가 침묵하여 토론을 종료합니다. (라운드 {debate_round + 1})")
                 break
         
-        # 최종 belief 동기화
         game_status = {
             'claims': structured_claims,
             'alive_players': [p.id for p in self.players if p.alive],
@@ -219,24 +194,21 @@ class MafiaGame:
             if player.alive:
                 player.update_belief(game_status)
 
-    def _process_day_vote(self, ai_target_id: int):
-        """투표 단계 - AI는 ai_target_id에 투표"""
+    def _process_day_vote(self, target_id: int):
         player_count = len(self.players)
         self.vote_counts = [0] * player_count
 
-        # 투표 기록 초기화
         for p in self.players:
             p.voted_by_last_turn = []
 
-        # AI 투표
         if self.players[0].alive:
-            if ai_target_id == -1 or not (0 <= ai_target_id < player_count):
+            if target_id == -1 or not (0 <= target_id < player_count):
                 self._log(f"  - AI(0)이(가) 투표를 기권했습니다.")
             else:
-                self.vote_counts[ai_target_id] += 1
-                self._log(f"  - AI(0)이(가) {ai_target_id}에게 투표했습니다.")
-                self.players[ai_target_id].voted_by_last_turn.append(0)
-                self.players[ai_target_id].vote_history[0] += 1
+                self.vote_counts[target_id] += 1
+                self._log(f"  - AI(0)이(가) {target_id}에게 투표했습니다.")
+                self.players[target_id].voted_by_last_turn.append(0)
+                self.players[target_id].vote_history[0] += 1
 
         # 봇들 투표
         for p in self.players:
@@ -328,18 +300,16 @@ class MafiaGame:
 
         self._update_alive_status()
 
-    def night_turn(self, ai_target_id: int):
-        """밤 단계 - 마피아/의사/경찰 행동"""
+    def night_turn(self, target_id: int):
         mafia_target = None
         doctor_target = None
 
-        # 1. 마피아
         mafia_list = [
             p for p in self.players if p.role == config.ROLE_MAFIA and p.alive
         ]
         if mafia_list:
             if self.players[0].role == config.ROLE_MAFIA and self.players[0].alive:
-                mafia_target = ai_target_id
+                mafia_target = target_id
                 self._log(
                     f"  - [마피아] AI(0)이(가) {mafia_target}을(를) 지목했습니다."
                 )
@@ -352,53 +322,48 @@ class MafiaGame:
                     f"  - [마피아] {shooter.id}이(가) {mafia_target}을(를) 지목했습니다."
                 )
 
-        # 2. 의사
         doctor_list = [
             p for p in self.players if p.role == config.ROLE_DOCTOR and p.alive
         ]
         for doctor in doctor_list:
-            target = -1
+            t = -1
             if doctor.id == 0:
-                target = ai_target_id
-                self._log(f"  - [의사] AI(0)이(가) {target}을(를) 치료했습니다.")
+                t = target_id
+                self._log(f"  - [의사] AI(0)이(가) {t}을(를) 치료했습니다.")
             else:
-                target = doctor.decide_night_action(self.players, config.ROLE_DOCTOR)
-                self._log(f"  - [의사] {doctor.id}이(가) {target}을(를) 치료했습니다.")
-            doctor_target = target
+                t = doctor.decide_night_action(self.players, config.ROLE_DOCTOR)
+                self._log(f"  - [의사] {doctor.id}이(가) {t}을(를) 치료했습니다.")
+            doctor_target = t
 
-        # 3. 경찰
         police_list = [
             p for p in self.players if p.role == config.ROLE_POLICE and p.alive
         ]
         for police in police_list:
-            target = -1
+            t = -1
             if police.id == 0:
-                target = ai_target_id
+                t = target_id
             else:
-                target = police.decide_night_action(self.players, config.ROLE_POLICE)
+                t = police.decide_night_action(self.players, config.ROLE_POLICE)
 
-            if target != -1:
+            if t != -1:
                 role_str = (
                     "마피아"
-                    if self.players[target].role == config.ROLE_MAFIA
+                    if self.players[t].role == config.ROLE_MAFIA
                     else "시민"
                 )
                 prefix = "[경찰] AI(0)" if police.id == 0 else f"[경찰] {police.id}"
                 self._log(
-                    f"  - {prefix}이(가) {target}을(를) 조사하여 '{role_str}'임을 확인했습니다."
+                    f"  - {prefix}이(가) {t}을(를) 조사하여 '{role_str}'임을 확인했습니다."
                 )
 
-                if self.players[target].role == config.ROLE_MAFIA:
-                    # 마피아로 확정
-                    police.belief[target, 3] = 100  # 마피아 확신
-                    police.belief[target, 0] = -100  # 시민 아님
-                    police.confirmed_mafia.add(target)  # 확인된 마피아에 추가
+                if self.players[t].role == config.ROLE_MAFIA:
+                    police.belief[t, 3] = 100
+                    police.belief[t, 0] = -100
+                    police.confirmed_mafia.add(t)
                 else:
-                    # 시민으로 확정 (경찰, 의사, 시민 중 하나)
-                    police.belief[target, 3] = -100  # 마피아 아님
-                    police.belief[target, 0] = 50  # 시민일 가능성
+                    police.belief[t, 3] = -100
+                    police.belief[t, 0] = 50
 
-        # 결과 정산
         no_death = False
         if mafia_target is not None:
             if mafia_target != doctor_target:
@@ -409,7 +374,6 @@ class MafiaGame:
                 self._log(f"  - 의사가 {doctor_target}을(를) 살려냈습니다.")
                 no_death = True
         
-        # Store night result for belief updates (Doctor's Logic)
         self.last_night_result = {
             'no_death': no_death,
             'last_healed': doctor_target if doctor_target is not None else -1
@@ -417,13 +381,12 @@ class MafiaGame:
 
         self._update_alive_status()
 
-    # (이하 _update_alive_status, _get_game_status, check_game_over 메서드는 Agent 참조만 수정해서 사용)
     def _update_alive_status(self):
         self.alive_status = [1 if p.alive else 0 for p in self.players]
 
     def _get_game_status(self) -> Dict:
         phase_map = {
-            config.PHASE_DAY_DISCUSSION: 0,  # Merged: claim + discussion
+            config.PHASE_DAY_DISCUSSION: 0,
             config.PHASE_DAY_VOTE: 1,
             config.PHASE_NIGHT: 2,
         }
@@ -443,10 +406,9 @@ class MafiaGame:
             1 for p in self.players if p.role != config.ROLE_MAFIA and p.alive
         )
 
-        # 무승부 조건: 최대 턴 수 초과
         if self.day_count > config.MAX_DAYS:
             self._log(f"\n게임 종료: {config.MAX_DAYS}일이 지나 무승부입니다!")
-            return True, False  # 무승부는 패배로 처리
+            return True, False
 
         if mafia_count == 0:
             self._log(f"\n게임 종료: 마피아가 모두 사망했습니다. 시민 팀 승리!")

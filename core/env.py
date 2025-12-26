@@ -52,18 +52,18 @@ class MafiaEnv(gym.Env):
 
         claim_role = -1
         target_id = -1
-        accused_role = -1
+        reveal_role, target_id, accused_role = -1, -1, -1
         
         if action == config.ACTION_SILENT:
             pass
-        elif config.ACTION_CLAIM_CITIZEN <= action <= config.ACTION_CLAIM_MAFIA:
-            claim_role = action - config.ACTION_CLAIM_CITIZEN
+        elif config.ACTION_REVEAL_CITIZEN <= action <= config.ACTION_REVEAL_MAFIA:
+            reveal_role = action - config.ACTION_REVEAL_CITIZEN
         elif config.ACTION_ACCUSE_START <= action <= config.ACTION_ACCUSE_END:
             accuse_idx = action - config.ACTION_ACCUSE_START
             target_id = accuse_idx // 4
             accused_role = accuse_idx % 4
         
-        status, done, win = self.game.process_turn(claim_role, target_id, accused_role)
+        status, done, win = self.game.process_turn(reveal_role, target_id, accused_role)
         
         if prev_phase == config.PHASE_DAY_VOTE:
             self.last_vote_record = np.zeros((config.PLAYER_COUNT, config.PLAYER_COUNT), dtype=np.float32)
@@ -96,23 +96,19 @@ class MafiaEnv(gym.Env):
             reward += 0.2
 
         if self.game.players[my_id].alive:
-            phase = prev_phase  # 보상은 이전 페이즈 기준으로 계산
+            phase = prev_phase
             
-            # 역할 주장 보상
-            if claim_role != -1:
-                if claim_role == my_role:
-                    # 진실 주장
+            if reveal_role != -1:
+                if reveal_role == my_role:
                     reward += 1.0
                     if my_role in [config.ROLE_POLICE, config.ROLE_DOCTOR]:
-                        reward += 2.0  # 특수 역할은 밝히기 위험도 높음
+                        reward += 2.0
                 else:
-                    # 거짓 주장
                     if my_role == config.ROLE_MAFIA:
-                        reward += 0.5  # 마피아는 위장 허용
+                        reward += 0.5
                     else:
-                        reward -= 1.0  # 시민 팀은 거짓 주장 페널티
+                        reward -= 1.0
             
-            # 타겟 지목 및 역할 추정 보상
             if target_id != -1:
                 if my_role == config.ROLE_CITIZEN:
                     reward += self._calculate_citizen_reward(target_id, accused_role, phase)
@@ -128,37 +124,24 @@ class MafiaEnv(gym.Env):
         return self._encode_observation(status), reward, done, False, {}
 
     def _get_action_mask(self):
-        """
-        액션 마스크 (37개):
-        - 0: 침묵
-        - 1~4: 역할 주장 (시민/경찰/의사/마피아)
-        - 5~36: 타겟 지목 + 역할 추정 (8명 × 4역할 = 32개)
-        """
         mask = np.zeros(config.TOTAL_ACTIONS, dtype=np.int8)
         my_id = self.game.players[0].id
         my_role = self.game.players[my_id].role
         phase = self.game.phase
 
-        # === 0: 침묵 (항상 허용) ===
         mask[config.ACTION_SILENT] = 1
 
-        # === 1~4: 역할 주장 (토론 단계에만) ===
         if phase == config.PHASE_DAY_DISCUSSION:
-            mask[config.ACTION_CLAIM_CITIZEN:config.ACTION_CLAIM_MAFIA + 1] = 1
+            mask[config.ACTION_REVEAL_CITIZEN:config.ACTION_REVEAL_MAFIA + 1] = 1
 
-        # === 5~36: 타겟 지목 + 역할 추정 ===
         for target_id in range(config.PLAYER_COUNT):
-            # 기본 조건: 살아있는 플레이어만 지목 가능
             if not self.game.players[target_id].alive:
-                # 죽은 플레이어는 모든 역할 추정 불가
                 for role in range(4):
                     action_idx = config.ACTION_ACCUSE_START + (target_id * 4 + role)
                     mask[action_idx] = 0
                 continue
 
-            # 페이즈별 제약
             if phase == config.PHASE_DAY_DISCUSSION:
-                # 토론: 자신 제외 모두 지목 가능
                 if target_id == my_id:
                     for role in range(4):
                         action_idx = config.ACTION_ACCUSE_START + (target_id * 4 + role)
@@ -169,36 +152,29 @@ class MafiaEnv(gym.Env):
                         mask[action_idx] = 1
 
             elif phase == config.PHASE_DAY_VOTE:
-                # 투표: 자신 제외 모두 투표 가능 (역할 추정 불필요, 첫 번째 역할만 사용)
                 if target_id == my_id:
                     for role in range(4):
                         action_idx = config.ACTION_ACCUSE_START + (target_id * 4 + role)
                         mask[action_idx] = 0
                 else:
-                    # 투표는 단순 지목이므로 첫 번째 슬롯만 허용
                     action_idx = config.ACTION_ACCUSE_START + (target_id * 4)
                     mask[action_idx] = 1
-                    # 나머지는 불허
                     for role in range(1, 4):
                         mask[config.ACTION_ACCUSE_START + (target_id * 4 + role)] = 0
 
             elif phase == config.PHASE_NIGHT:
-                # 밤: 역할별 행동 제약
                 if my_role == config.ROLE_MAFIA:
-                    # 마피아: 동료 마피아 제외
                     if self.game.players[target_id].role == config.ROLE_MAFIA:
                         for role in range(4):
                             action_idx = config.ACTION_ACCUSE_START + (target_id * 4 + role)
                             mask[action_idx] = 0
                     else:
-                        # 첫 번째 슬롯만 허용 (밤에는 역할 추정 불필요)
                         action_idx = config.ACTION_ACCUSE_START + (target_id * 4)
                         mask[action_idx] = 1
                         for role in range(1, 4):
                             mask[config.ACTION_ACCUSE_START + (target_id * 4 + role)] = 0
 
                 elif my_role == config.ROLE_POLICE:
-                    # 경찰: 자신 제외 모두 조사 가능
                     if target_id == my_id:
                         for role in range(4):
                             action_idx = config.ACTION_ACCUSE_START + (target_id * 4 + role)
@@ -210,14 +186,12 @@ class MafiaEnv(gym.Env):
                             mask[config.ACTION_ACCUSE_START + (target_id * 4 + role)] = 0
 
                 elif my_role == config.ROLE_DOCTOR:
-                    # 의사: 자신 포함 모두 치료 가능
                     action_idx = config.ACTION_ACCUSE_START + (target_id * 4)
                     mask[action_idx] = 1
                     for role in range(1, 4):
                         mask[config.ACTION_ACCUSE_START + (target_id * 4 + role)] = 0
 
                 elif my_role == config.ROLE_CITIZEN:
-                    # 시민: 밤에는 행동 불가
                     for role in range(4):
                         action_idx = config.ACTION_ACCUSE_START + (target_id * 4 + role)
                         mask[action_idx] = 0
@@ -225,7 +199,6 @@ class MafiaEnv(gym.Env):
         return mask
 
     def _calculate_citizen_reward(self, target_id, accused_role, phase):
-        """시민 팀 보상: target_id 지목, accused_role 추정"""
         if target_id == -1:
             return 0.0
             
@@ -235,7 +208,6 @@ class MafiaEnv(gym.Env):
             target = self.game.players[target_id]
 
             if phase == config.PHASE_DAY_VOTE:
-                # 투표 단계: 마피아 투표 시 높은 보상
                 if target.role == config.ROLE_MAFIA:
                     reward += 5.0
                     if not target.alive:
@@ -246,19 +218,17 @@ class MafiaEnv(gym.Env):
                     reward -= 1.0
             
             elif phase == config.PHASE_DAY_DISCUSSION:
-                # 토론 단계: 정확한 역할 추정 시 소폭 보상
                 if accused_role != -1:
                     if accused_role == config.ROLE_MAFIA and target.role == config.ROLE_MAFIA:
-                        reward += 1.5  # 마피아 정확히 지목
+                        reward += 1.5
                     elif accused_role != config.ROLE_MAFIA and target.role != config.ROLE_MAFIA:
-                        reward += 0.5  # 시민 팀 정확히 추정
+                        reward += 0.5
                     elif accused_role == config.ROLE_MAFIA and target.role != config.ROLE_MAFIA:
-                        reward -= 0.5  # 시민을 마피아로 오인
+                        reward -= 0.5
                 
         return reward
 
     def _calculate_mafia_reward(self, target_id, accused_role, phase):
-        """마피아 보상: 시민 팀 제거 및 잘못된 지목 유도"""
         if target_id == -1:
             return 0.0
             
@@ -268,7 +238,6 @@ class MafiaEnv(gym.Env):
             target = self.game.players[target_id]
 
             if phase == config.PHASE_DAY_VOTE:
-                # 투표 단계: 시민 팀 제거 시 보상
                 if target.role == config.ROLE_POLICE:
                     reward += 7.0
                     if not target.alive:
@@ -282,10 +251,9 @@ class MafiaEnv(gym.Env):
                     if not target.alive:
                         reward += 1.0
                 elif target.role == config.ROLE_MAFIA:
-                    reward -= 15.0  # 동료 마피아 투표 시 큰 페널티
+                    reward -= 15.0
 
             elif phase == config.PHASE_NIGHT:
-                # 밤 단계: 고가치 타겟 제거
                 if target.role == config.ROLE_POLICE:
                     reward += 8.0
                     if not target.alive:
@@ -300,15 +268,13 @@ class MafiaEnv(gym.Env):
                         reward += 1.0
             
             elif phase == config.PHASE_DAY_DISCUSSION:
-                # 토론 단계: 잘못된 역할 추정 유도 (위장)
                 if accused_role != -1:
                     if accused_role != config.ROLE_MAFIA and target.role != config.ROLE_MAFIA:
-                        reward += 0.5  # 시민을 다른 역할로 지목 (혼란 유도)
+                        reward += 0.5
                 
         return reward
 
     def _calculate_police_reward(self, target_id, phase):
-        """경찰 보상: 마피아 조사"""
         if target_id == -1 or phase != config.PHASE_NIGHT:
             return 0.0
             
@@ -317,13 +283,12 @@ class MafiaEnv(gym.Env):
         if 0 <= target_id < len(self.game.players):
             target = self.game.players[target_id]
             if target.role == config.ROLE_MAFIA:
-                reward += 7.0  # 마피아 발견
+                reward += 7.0
             else:
-                reward += 0.5  # 시민 확인
+                reward += 0.5
         return reward
 
     def _calculate_doctor_reward(self, prev_alive, target_id, phase):
-        """의사 보상: 치료 성공"""
         if target_id == -1 or phase != config.PHASE_NIGHT:
             return 0.0
             
@@ -333,18 +298,18 @@ class MafiaEnv(gym.Env):
         prev_alive_count = sum(prev_alive)
         
         if current_alive_count == prev_alive_count:
-            reward += 8.0  # 치료 성공 (사망자 없음)
+            reward += 8.0
             
             if 0 <= target_id < len(self.game.players):
                 target = self.game.players[target_id]
                 if target.role == config.ROLE_POLICE:
-                    reward += 2.0  # 경찰 보호
+                    reward += 2.0
                 elif target.role == config.ROLE_DOCTOR:
-                    reward += 1.5  # 자신 보호
+                    reward += 1.5
                 elif target.role == config.ROLE_CITIZEN:
-                    reward += 1.0  # 시민 보호
+                    reward += 1.0
         else:
-            reward += 0.3  # 치료 실패해도 소폭 보상
+            reward += 0.3
 
         return reward
 
