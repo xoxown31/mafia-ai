@@ -11,6 +11,7 @@ def main():
     parser.add_argument('--mode', type=str, default='train', choices=['train', 'test'], help='Execution mode')
     parser.add_argument('--agent', type=str, default='ppo', choices=['ppo', 'reinforce'], help='Agent type')
     parser.add_argument('--episodes', type=int, default=1000, help='Number of training episodes')
+    parser.add_argument('--use-gru', action='store_true', help='Use GRU layer for temporal reasoning (PPO only)')
     args = parser.parse_args()
 
     # 로그 폴더 생성
@@ -26,9 +27,11 @@ def main():
         action_dim = env.action_space.n
 
         if args.agent == 'ppo':
-            agent = PPO(state_dim, action_dim)
+            agent = PPO(state_dim, action_dim, use_gru=args.use_gru)
+            print(f"PPO Agent initialized (state_dim={state_dim}, action_dim={action_dim}, use_gru={args.use_gru})")
         elif args.agent == 'reinforce':
             agent = REINFORCEAgent(state_dim, action_dim)
+            print(f"REINFORCE Agent initialized (state_dim={state_dim}, action_dim={action_dim})")
         
         # 모드별 실행
         if args.mode == 'train':

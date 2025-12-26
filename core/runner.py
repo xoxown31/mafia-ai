@@ -16,7 +16,13 @@ def train(env, agent, args, log_file):
         is_win = False
 
         while not done:
-            action = agent.select_action(obs)
+            # GRU를 사용하는 경우 첫 번째 step에서 hidden state 초기화
+            if hasattr(agent, 'use_gru') and agent.use_gru:
+                is_first_step = (total_reward == 0)
+                action = agent.select_action(obs, reset_hidden=is_first_step)
+            else:
+                action = agent.select_action(obs)
+            
             next_obs, reward, done, truncated, _ = env.step(action)
 
             # 에이전트별 데이터 저장

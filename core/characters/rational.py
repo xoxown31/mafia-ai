@@ -110,34 +110,23 @@ class RationalCharacter(BaseCharacter):
     
     def _handle_assertion(self, speaker_id: int, target_id: int, assertion: str, 
                          reveal_role: int, current_day: int):
-        """Handle assertions about other players."""
         self.accusation_history.append((speaker_id, target_id, current_day))
         
         if target_id == self.id:
-            self._handle_assertion_about_me(speaker_id, assertion, reveal_role)
+            self._handle_assertion_about_me(speaker_id, reveal_role)
             return
         
         trust_factor = self.trust_scores.get(speaker_id, 0.5)
-        
-        if assertion == "CONFIRMED_MAFIA":
-            self._apply_belief_update(target_id, config.ROLE_MAFIA, 40.0 * trust_factor, "confirmed_mafia_claim")
-        elif assertion == "CONFIRMED_CITIZEN":
-            self._apply_belief_update(target_id, config.ROLE_MAFIA, -30.0 * trust_factor, "confirmed_citizen_claim")
-        elif assertion == "SUSPECT":
-            self._apply_belief_update(target_id, config.ROLE_MAFIA, 15.0 * trust_factor, "suspect_claim")
+        base_update = 15.0 if reveal_role == config.ROLE_POLICE else 10.0
+        self._apply_belief_update(target_id, config.ROLE_MAFIA, base_update * trust_factor, "accusation")
     
-    def _handle_assertion_about_me(self, speaker_id: int, assertion: str, reveal_role: int):
-        """Handle assertions targeting myself."""
-        if assertion == "CONFIRMED_CITIZEN" and self.role != config.ROLE_MAFIA:
-            if reveal_role == config.ROLE_POLICE:
-                self.trust_scores[speaker_id] = 1.0
-                self._apply_belief_update(speaker_id, config.ROLE_POLICE, 80.0, "self_verification")
-                self._apply_belief_update(speaker_id, config.ROLE_MAFIA, -100.0, "self_verification")
-        elif self.role != config.ROLE_MAFIA:
+    def _handle_assertion_about_me(self, speaker_id: int, reveal_role: int):
+        if self.role != config.ROLE_MAFIA:
             self._apply_belief_update(speaker_id, config.ROLE_MAFIA, 15.0, "false_accusation")
             self.trust_scores[speaker_id] = max(0.0, self.trust_scores.get(speaker_id, 0.5) - 0.2)
         elif self.role == config.ROLE_MAFIA:
-            self._apply_belief_update(speaker_id, config.ROLE_POLICE, 20.0, "accused_me_as_mafia")
+            if reveal_role == config.ROLE_POLICE:
+                self._apply_belief_update(speaker_id, config.ROLE_POLICE, 25.0, "police_found_me")
     
     def _process_execution(self, execution_result: Tuple, alive_players: List[int], current_day: int, vote_log: Dict = None):
         """Process execution results and update beliefs."""
@@ -305,7 +294,7 @@ class RationalCharacter(BaseCharacter):
         alive_ids = self._get_alive_ids(players, exclude_me=True)
         if not alive_ids:
             self.committed_target = -1
-            return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
+            return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT", "accused_role": -1}
         
         self.committed_target = -1
         
@@ -336,14 +325,14 @@ class RationalCharacter(BaseCharacter):
                 claim = self._mafia_claim_strategy(players, alive_ids, current_day)
         
         if not claim:
-            return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
+            return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT", "accused_role": -1}
         
         # Parrot Prevention: Check if already said this claim today (applies to ALL claims)
         if claim["type"] != "NO_ACTION":
             claim_signature = (claim["type"], claim["reveal_role"], claim["target_id"], claim["assertion"])
             if claim_signature in self.said_today:
                 # Already said this - stay silent
-                return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
+                return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT", "accused_role": -1}
             # Record this claim
             self.said_today.add(claim_signature)
         
@@ -358,7 +347,8 @@ class RationalCharacter(BaseCharacter):
                     "type": "CLAIM",
                     "reveal_role": self.role,
                     "target_id": pid,
-                    "assertion": "CONFIRMED_MAFIA"
+                    "assertion": "CONFIRMED_MAFIA",
+                    "accused_role": config.ROLE_MAFIA
                 }
         return None
     
@@ -393,7 +383,8 @@ class RationalCharacter(BaseCharacter):
                     "type": "CLAIM",
                     "reveal_role": config.ROLE_POLICE,
                     "target_id": speaker_id,
-                    "assertion": "CONFIRMED_MAFIA"
+                    "assertion": "CONFIRMED_MAFIA",
+                    "accused_role": config.ROLE_MAFIA
                 }
         
         return None
@@ -428,7 +419,8 @@ class RationalCharacter(BaseCharacter):
                     "type": "CLAIM",
                     "reveal_role": config.ROLE_DOCTOR,
                     "target_id": healed_pid,
-                    "assertion": "CONFIRMED_CITIZEN"
+                    "assertion": "CONFIRMED_CITIZEN",
+                    "accused_role": config.ROLE_CITIZEN
                 }
         
         # Also check if healed player has high mafia suspicion score
@@ -444,7 +436,8 @@ class RationalCharacter(BaseCharacter):
                     "type": "CLAIM",
                     "reveal_role": config.ROLE_DOCTOR,
                     "target_id": healed_pid,
-                    "assertion": "CONFIRMED_CITIZEN"
+                    "assertion": "CONFIRMED_CITIZEN",
+                    "accused_role": config.ROLE_CITIZEN
                 }
         
         return None
@@ -461,7 +454,8 @@ class RationalCharacter(BaseCharacter):
                         "type": "CLAIM",
                         "reveal_role": config.ROLE_POLICE,
                         "target_id": pid,
-                        "assertion": "CONFIRMED_CITIZEN"
+                        "assertion": "CONFIRMED_CITIZEN",
+                        "accused_role": config.ROLE_CITIZEN
                     }
         
         for mafia_id in self.confirmed_mafia:
@@ -472,7 +466,8 @@ class RationalCharacter(BaseCharacter):
                     "type": "CLAIM",
                     "reveal_role": config.ROLE_POLICE,
                     "target_id": mafia_id,
-                    "assertion": "CONFIRMED_MAFIA"
+                    "assertion": "CONFIRMED_MAFIA",
+                    "accused_role": config.ROLE_MAFIA
                 }
         
         # Use silence threshold with early game caution
@@ -498,7 +493,8 @@ class RationalCharacter(BaseCharacter):
                         "type": "CLAIM",
                         "reveal_role": config.ROLE_DOCTOR,
                         "target_id": healed_pid,
-                        "assertion": "CONFIRMED_CITIZEN"
+                        "assertion": "CONFIRMED_CITIZEN",
+                        "accused_role": config.ROLE_CITIZEN
                     }
         
         if police_is_dead or alive_count <= 3:
@@ -508,7 +504,8 @@ class RationalCharacter(BaseCharacter):
                     "type": "CLAIM",
                     "reveal_role": config.ROLE_DOCTOR,
                     "target_id": best_citizen,
-                    "assertion": "CONFIRMED_CITIZEN"
+                    "assertion": "CONFIRMED_CITIZEN",
+                    "accused_role": config.ROLE_CITIZEN
                 }
         
         # Use silence threshold with early game caution
@@ -544,10 +541,11 @@ class RationalCharacter(BaseCharacter):
                 "type": "CLAIM",
                 "reveal_role": -1,
                 "target_id": mafia_scores[0][0],
-                "assertion": "SUSPECT"
+                "assertion": "SUSPECT",
+                "accused_role": config.ROLE_MAFIA
             }
         
-        return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
+        return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT", "accused_role": -1}
     
     def _citizen_claim_strategy(self, alive_ids: List[int], current_day: int) -> Dict:
         """Citizen claim strategy with early game caution."""
@@ -559,7 +557,7 @@ class RationalCharacter(BaseCharacter):
         non_mafia_alive = [pid for pid in alive_ids if players[pid].role != config.ROLE_MAFIA]
         
         if not non_mafia_alive or current_day == 1:
-            return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
+            return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT", "accused_role": -1}
         
         police_suspects = [(pid, self.belief[pid, config.ROLE_POLICE]) for pid in non_mafia_alive]
         police_suspects.sort(key=lambda x: x[1], reverse=True)
@@ -571,7 +569,8 @@ class RationalCharacter(BaseCharacter):
                 "type": "CLAIM",
                 "reveal_role": -1,
                 "target_id": police_suspects[0][0],
-                "assertion": "SUSPECT"
+                "assertion": "SUSPECT",
+                "accused_role": config.ROLE_MAFIA
             }
         
         if np.random.random() < (0.4 * self.aggressiveness):
@@ -581,10 +580,11 @@ class RationalCharacter(BaseCharacter):
                 "type": "CLAIM",
                 "reveal_role": -1,
                 "target_id": target,
-                "assertion": "SUSPECT"
+                "assertion": "SUSPECT",
+                "accused_role": config.ROLE_MAFIA
             }
         
-        return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT"}
+        return {"type": "NO_ACTION", "reveal_role": -1, "target_id": -1, "assertion": "SUSPECT", "accused_role": -1}
     
     def decide_vote(self, players: List["BaseCharacter"], current_day: int = 1) -> int:
         """Deterministic voting using argmax strategy."""

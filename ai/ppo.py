@@ -6,7 +6,15 @@ from ai.model import ActorCritic
 from ai.buffer import RolloutBuffer
 
 class PPO:
-    def __init__(self, state_dim, action_dim):
+    def __init__(self, state_dim, action_dim, use_gru=False):
+        """
+        PPO 알고리즘
+        
+        Args:
+            state_dim: 관측 공간 차원
+            action_dim: 액션 공간 차원
+            use_gru: GRU 사용 여부 (시계열 추론 강화)
+        """
         self.gamma = config.GAMMA
         self.eps_clip = config.EPS_CLIP
         self.k_epochs = config.K_EPOCHS
@@ -17,23 +25,37 @@ class PPO:
         self.value_loss_coef = config.VALUE_LOSS_COEF
         self.max_grad_norm = config.MAX_GRAD_NORM
         
+        # GRU 사용 여부
+        self.use_gru = use_gru
+        
         # 데이터 수집을 위한 버퍼 생성
         self.buffer = RolloutBuffer()
         
         # 현재 정책 (학습 대상)
-        self.policy = ActorCritic(state_dim, action_dim)
+        self.policy = ActorCritic(state_dim, action_dim, use_gru=use_gru)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.lr)
         
         # 이전 정책 (Ratio 계산용, 가중치 고정)
-        self.policy_old = ActorCritic(state_dim, action_dim)
+        self.policy_old = ActorCritic(state_dim, action_dim, use_gru=use_gru)
         self.policy_old.load_state_dict(self.policy.state_dict())
         
         self.MseLoss = nn.MSELoss()
+        
+        # GRU hidden state (에피소드 중 유지)
+        self.hidden_state = None
 
-    def select_action(self, state):
+    def select_action(self, state, reset_hidden=False):
         """
         상태(Dict)를 받아 마스킹을 적용한 후 행동을 결정
+        
+        Args:
+            state: 관측 상태 (dict 형태: {'observation': ..., 'action_mask': ...})
+            reset_hidden: GRU hidden state 초기화 여부 (에피소드 시작 시)
         """
+        # 에피소드 시작 시 hidden state 초기화
+        if reset_hidden:
+            self.hidden_state = None
+        
         # 1. Dict에서 관측값과 마스크 분리
         if isinstance(state, dict):
             obs = state['observation']
@@ -43,11 +65,16 @@ class PPO:
             mask = None
             
         with torch.no_grad():
-            state_tensor = torch.FloatTensor(obs)
-            # 마스크도 텐서로 변환
+            state_tensor = torch.FloatTensor(obs).unsqueeze(0)
             mask_tensor = torch.FloatTensor(mask) if mask is not None else None
             
-            action_probs, _ = self.policy_old(state_tensor)
+            if self.use_gru:
+                action_probs, _, new_hidden = self.policy_old(state_tensor, self.hidden_state)
+                self.hidden_state = new_hidden
+                action_probs = action_probs.squeeze(0)
+            else:
+                action_probs, _ = self.policy_old(state_tensor)
+                action_probs = action_probs.squeeze(0)
             
             # 2. 마스킹 적용
             if mask_tensor is not None:
@@ -67,8 +94,7 @@ class PPO:
             action = dist.sample()
             action_logprob = dist.log_prob(action)
             
-        # 버퍼에 저장 (관측값만 저장할지, 딕셔너리 통째로 저장할지 결정 필요. 보통 관측값만 저장)
-        self.buffer.states.append(state_tensor) 
+        self.buffer.states.append(state_tensor.squeeze(0))
         self.buffer.actions.append(action)
         self.buffer.logprobs.append(action_logprob)
         
@@ -97,10 +123,11 @@ class PPO:
         old_actions = torch.stack(self.buffer.actions, dim=0).detach()
         old_logprobs = torch.stack(self.buffer.logprobs, dim=0).detach()
         
-        # 2. K 에포크만큼 최적화 수행
         for _ in range(self.k_epochs):
-            # 현재 정책으로 평가 (Evaluating old actions and values)
-            action_probs, state_values = self.policy(old_states)
+            if self.use_gru:
+                action_probs, state_values, _ = self.policy(old_states, None)
+            else:
+                action_probs, state_values = self.policy(old_states)
             
             dist = Categorical(action_probs)
             logprobs = dist.log_prob(old_actions)
