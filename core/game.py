@@ -336,14 +336,9 @@ class MafiaGame:
         self.alive_status = [1 if p.alive else 0 for p in self.players]
 
     def _get_game_status(self) -> Dict:
-        phase_map = {
-            config.PHASE_DAY_DISCUSSION: 0,  # Merged: claim + discussion
-            config.PHASE_DAY_VOTE: 1,
-            config.PHASE_NIGHT: 2,
-        }
         return {
             "day": self.day_count,
-            "phase": phase_map.get(self.phase, 0),
+            "phase": self.phase,
             "alive_status": self.alive_status,
             "roles": [p.role for p in self.players],
         }
