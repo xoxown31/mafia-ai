@@ -100,8 +100,7 @@ class TeamStatsTab:
         # 데이터 준비
         sizes = [team_wins["CITIZEN"], team_wins["MAFIA"]]
         labels = ["CITIZEN", "MAFIA"]
-        # 구글 머티리얼 컬러 (그린/레드)
-        colors = ["#0F9D58", "#DB4437"]
+        colors = ["#8AB4F8", "#174EA6"]
 
         # [변경점] 도넛 차트 그리기
         # wedgeprops: 도넛의 두께(width)와 테두리 색상(edgecolor) 설정
@@ -128,7 +127,14 @@ class TeamStatsTab:
             color="#333333",
         )
 
-        ax.set_title("팀별 승리 점유율")
+        ax.set_title(
+            "팀별 승리 점유율",
+            fontdict={
+                "fontsize": 14,
+                "fontweight": "bold",
+                "fontname": "Malgun Gothic",  # Tkinter 라벨과 동일한 폰트
+            },
+        )
 
         canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
         canvas.draw()
