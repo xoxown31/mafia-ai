@@ -226,6 +226,7 @@ class LLMAgent(BaseAgent):
         )
         return response.choices[0].message.content
 
+
     def _apply_belief_updates(self, raw_json: str):
         """LLM의 분석 결과를 내부 신념 행렬(N x 4)에 업데이트"""
         try:
