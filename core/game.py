@@ -3,8 +3,8 @@ import config
 import random
 
 # Import RationalCharacter directly
-from core.characters.rational import RationalCharacter
-from core.characters.base import BaseCharacter
+from core.agent.rational import RationalCharacter
+from core.agent.base import BaseCharacter
 
 
 class MafiaGame:
