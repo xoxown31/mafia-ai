@@ -6,7 +6,7 @@ import tkinter as tk
 from core.env import MafiaEnv
 from ai.ppo import PPO
 from ai.reinforce import REINFORCEAgent
-from core.runner import train, test
+from utils.runner import train, test
 from utils.analysis import analyze_log_file
 
 # GUI 모듈 임포트 (gui 패키지가 없어도 에러 안 나게 처리)
