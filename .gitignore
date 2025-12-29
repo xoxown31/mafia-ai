@@ -6,7 +6,7 @@ __pycache__/
 # Virtual Environments
 venv/
 env/
-.env
+*.env
 .venv/
 
 # IDE Settings (VS Code, PyCharm)

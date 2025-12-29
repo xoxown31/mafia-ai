@@ -2,14 +2,15 @@ from typing import List, Dict, Tuple
 import config
 import random
 
-# RationalCharacter 및 BaseCharacter 참조
-from core.characters.rational import RationalCharacter
-from core.characters.base import BaseCharacter
+# Import LLMAgent directly
+from core.agent.baseAgent import BaseAgent
+from core.agent.llmAgent import LLMAgent
+
 
 
 class MafiaGame:
     def __init__(self, log_file=None):
-        self.players: List[RationalCharacter] = []
+        self.players: List[LLMAgent] = []
         self.phase = config.PHASE_DAY_DISCUSSION
         self.day_count = 1
         self.alive_status = []
@@ -37,8 +38,8 @@ class MafiaGame:
         self._log(f"[System] 이번 게임의 AI 플레이어는 {self.ai_id}번 입니다.")
 
         for i in range(config.PLAYER_COUNT):
-            # 모든 플레이어를 RationalCharacter(또는 개편될 BaseAgent 자식들)로 생성
-            player = RationalCharacter(player_id=i)
+            # 모든 플레이어를 LLMAgent(또는 개편될 BaseAgent 자식들)로 생성
+            player = LLMAgent(player_id=i)
             self.players.append(player)
 
         roles_to_assign = config.ROLES.copy()
@@ -223,7 +224,7 @@ class MafiaGame:
                 )
 
         for pid, (target_id, is_mafia) in police_results.items():
-            # RationalCharacter에 _update_police_result 같은 메서드를 만들거나
+            # LLMAgent에 _update_police_result 같은 메서드를 만들거나
             # belief를 직접 건드려야 함 (Game은 신이므로 허용)
             p = self.players[pid]
             if p.alive:
