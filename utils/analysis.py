@@ -7,10 +7,6 @@ import seaborn as sns
 
 
 def parse_game_data(log_path):
-    """
-    [NEW] 로그 파일을 읽어 게임 데이터 리스트를 반환하는 함수.
-    GUI 등 외부 프로그램에서 재사용하기 위해 분리함.
-    """
     if not os.path.exists(log_path):
         return []
 
@@ -50,10 +46,14 @@ def parse_game_data(log_path):
     return games
 
 
-def analyze_log_file(log_path, output_img="analysis_detailed.png"):
+def analyze_log_file(log_path, output_img=None):
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    output_img = os.path.join(current_dir, "analysis_detailed.png")
+
     print(f"[Analysis] 로그 파일 분석 중: {log_path}")
 
-    # [수정] 위에서 만든 함수를 호출하여 데이터를 가져옴
+    # 위에서 만든 함수를 호출하여 데이터를 가져옴
     games = parse_game_data(log_path)
 
     if not games:
@@ -147,6 +147,12 @@ def analyze_log_file(log_path, output_img="analysis_detailed.png"):
     plt.xticks(rotation=45, ha="right")
 
     plt.tight_layout()
+
+    # [추가] 저장할 폴더가 없으면 자동으로 생성하는 안전장치
+    output_dir = os.path.dirname(output_img)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     plt.savefig(output_img)
     plt.close()
     print(f"[Analysis] 분석 결과 그래프 저장 완료: {output_img}")
