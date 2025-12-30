@@ -22,6 +22,13 @@ class MafiaGame:
         self.last_night_result = None  # Track night results
         self.police_logs = {}  # 경찰 조사 결과 기록
 
+        # 역할 번호 -> 역할 이름 문자열 맵
+        self.role_names = {
+            v: k.replace("ROLE_", "")
+            for k, v in config.__dict__.items()
+            if k.startswith("ROLE_")
+        }
+
     def _log(self, message):
         if self.log_file:
             self.log_file.write(message + "\n")
@@ -44,17 +51,11 @@ class MafiaGame:
         roles_to_assign = config.ROLES.copy()
         random.shuffle(roles_to_assign)
 
-        role_names = {
-            v: k.replace("ROLE_", "")
-            for k, v in config.__dict__.items()
-            if k.startswith("ROLE_")
-        }
-
         for i, role_int in enumerate(roles_to_assign):
             self.players[i].role = role_int
 
             # 로그 출력
-            role_name = role_names.get(role_int, "Unknown")
+            role_name = self.role_names.get(role_int, "Unknown")
             self._log(f"플레이어 {i}: {role_name} (LLM Agent)")
 
         self.alive_status = [True for _ in range(config.PLAYER_COUNT)]
@@ -112,9 +113,7 @@ class MafiaGame:
                 claim = claim_dict.get("claim")
                 role_id = claim_dict.get("role")
                 target_id = claim_dict.get("target_id")
-                role_name = {0: "시민", 1: "경찰", 2: "의사", 3: "마피아"}.get(
-                    role_id, "알 수 없음"
-                )
+                role_name = self.role_names.get(role_id, "알 수 없음")
                 discussion_ended = claim_dict.get("discussion_status")
                 reason = claim_dict.get("reason", "")
 
@@ -273,62 +272,52 @@ class MafiaGame:
             if p.role == config.ROLE_CITIZEN:
                 continue
             night_dict = self._get_game_status(p.id)
+            night_dict["living_players"] = [
+                i for i, alive in enumerate(self.alive_status) if alive
+            ]
             conversation_log_str = ""  # No conversation log for night actions
             response_str = p.get_action(night_dict, conversation_log_str)
             try:
                 night_dict = json.loads(response_str)
+                target = night_dict.get("target_id")
             except json.JSONDecodeError:
                 self._log(
                     f"  - 플레이어 {p.id}: 잘못된 JSON 응답 수신. 밤 행동을 건너뜁니다."
                 )
                 continue
-            target = night_dict.get("target_id")
-            if p.role == config.ROLE_MAFIA:
-                mafia_target = target
-            elif p.role == config.ROLE_DOCTOR:
-                doctor_target = target
-            elif p.role == config.ROLE_POLICE:
-                police_target = target
-        self._log("- 밤 행동 결과:")
-        # 결과 정산
-        no_death = False
-        if mafia_target is not None:
-            # [FIX] 마피아 타겟이 유효하고 살아있는지 확인
-            if 0 <= mafia_target < len(self.players) and self.players[mafia_target].alive:
-                if mafia_target != doctor_target:
-                    self.players[mafia_target].alive = False
-                    self._log(f"  - {mafia_target}번 플레이어가 마피아에게 살해당했습니다.")
-                    no_death = False
-                else:
-                    self._log(f"  - 의사가 {doctor_target}을(를) 살려냈습니다.")
-                    no_death = True
-            else:
-                self._log(f"  - 마피아의 공격 대상({mafia_target})이 잘못되었거나 이미 사망한 플레이어입니다. 공격이 무산되었습니다.")
-                no_death = True
-        else:
-            self._log("  - 마피아가 아무도 공격하지 않았습니다.")
-            no_death = True
+            # 유효한 타겟인지 검증 (살아있는 플레이어인가?) [cite: 159]
+            if (
+                target is not None
+                and 0 <= target < len(self.players)
+                and self.players[target].alive
+            ):
+                if p.role == config.ROLE_MAFIA:
+                    mafia_target = target
+                elif p.role == config.ROLE_DOCTOR:
+                    doctor_target = target
+                elif p.role == config.ROLE_POLICE:
+                    police_target = target
 
-        # 경찰 조사 결과 로그 (경찰이 있고, 대상을 지정했을 때만)
+        self._log("- 밤 행동 결과:")
+        no_death = True
+        if mafia_target is not None:
+            if mafia_target != doctor_target:
+                self.players[mafia_target].alive = False
+                self._log(f"  - {mafia_target}번 플레이어가 마피아에게 살해당했습니다.")
+                no_death = False
+            else:
+                self._log(f"  - 의사가 {doctor_target}번 플레이어를 살려냈습니다.")
+
+        # 경찰 조사 결과 저장
         if police_target is not None:
-            # 역할 이름 찾기
-            role_names = {
-                v: k.replace("ROLE_", "")
-                for k, v in config.__dict__.items()
-                if k.startswith("ROLE_")
-            }
-            role_name = role_names.get(self.players[police_target].role, "알 수 없음")
-            self._log(
-                f"  - 경찰의 조사 결과: {police_target}번 플레이어는 [{role_name}]입니다."
-            )
+            role_name = self.role_names.get(self.players[police_target].role, "알 수 없음")
+            self._log(f"  - 경찰 조사: {police_target}번은 [{role_name}]입니다.")
             self.police_logs[police_target] = self.players[police_target].role
 
-        # Store night result for belief updates (Doctor's Logic)
         self.last_night_result = {
             "no_death": no_death,
-            "last_healed": doctor_target if doctor_target is not None else -1,
+            "victim": mafia_target if not no_death else None,
         }
-
         self._update_alive_status()
 
     # (이하 _update_alive_status, _get_game_status, check_game_over 메서드는 Agent 참조만 수정해서 사용)

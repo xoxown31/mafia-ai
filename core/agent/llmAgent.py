@@ -60,15 +60,15 @@ class LLMAgent(BaseAgent):
         input_data = self._prepare_input_data(game_status, conversation_log)
 
         prompt = f"""
-### 페르소나 (절대 빙의)
-- **플레이어 ID**: {self.id}
-- **부여된 역할**: [{input_data.get('my_role_name')}]
-- **지시**: 당신은 오직 이 역할에 입각해서만 생각하고, 발언하고, 행동해야 합니다. 다른 사람의 역할을 흉내내거나 추측해서 말하지 마십시오.
+### 당신의 페르소나
+- 당신의 ID: {self.id}
+- 당신의 실제 역할: [{input_data.get('my_role_name')}]
+- **절대 원칙**: 당신은 자신의 팀(시민 혹은 마피아)의 승리를 위해 행동해야 합니다. 스스로를 마피아라고 주장하거나 동료를 투표하는 것은 금지됩니다.
 
-### 핵심 지침
-1. **독립적 사고**: 다른 플레이어의 주장을 맹목적으로 따라하지 마십시오. `conversation_history`는 참고 자료일 뿐, `belief_matrix_summary`와 게임의 객관적 사실에 근거하여 스스로 판단해야 합니다.
-2. **신념 업데이트**: `GAME STATE`를 분석하여 각 플레이어가 마피아일 확률(신념)의 변화량($\Delta$)을 -100에서 100 사이로 계산합니다.
-3. **전략적 발언**: 계산된 신념을 바탕으로, 이번 토론에서 어떤 주장을 할지 결정합니다. (자신을 변호, 타인을 공격, 혹은 침묵)
+### 논리적 사고 단계
+1. **분석**: 현재 생존자 중 누가 가장 의심스러운가?
+2. **검증**: 내가 공격하려는 대상이 내 팀원인가? (마피아팀인 경우 mafia_members 확인)
+3. **결정**: 어떤 주장을 할 것인가?
 
 ### [GAME STATE]
 {json.dumps(input_data, indent=2, ensure_ascii=False)}
@@ -83,6 +83,7 @@ class LLMAgent(BaseAgent):
     "target_id": int or null,
     "role": int or null (주장하는 직업 번호: 0:시민, 1:경찰, 2:의사, 3:마피아),
     "reason": "왜 그렇게 주장했는지에 대한 논리적 근거"
+    "discussion_status": "Proceed"|"End"
 }}
 """
         response_json = self._call_llm(prompt)
