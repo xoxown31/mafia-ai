@@ -15,32 +15,20 @@ class MafiaGame:
         self.players: List[LLMAgent] = []
         self.phase = Phase.DAY_DISCUSSION  # Start with discussion phase
         self.day_count = 1
-        self.alive_status = []
         self.vote_counts = []
         self.log_file = log_file
         self.final_vote = 0
-        self.last_execution_result = None  # Track execution results
-        self.last_night_result = None  # Track night results
-        self.police_logs = {}  # 경찰 조사 결과 기록
         self.action_history: List[GameEvent] = [] # 게임 전체 이벤트 기록
-
-        # 역할 번호 -> 역할 이름 문자열 맵
-        self.role_names = {
-            role: role.name
-            for role in Role
-        }
 
     def _log(self, message):
         if self.log_file:
             self.log_file.write(message + "\n")
 
-    def reset(self) -> Dict:
+    def reset(self) -> GameStatus:
         self._log("\n--- 새 게임 시작 ---")
         self.day_count = 1
         self.phase = Phase.DAY_DISCUSSION  # Start with discussion phase
         self.players = []
-        self.last_execution_result = None
-        self.last_night_result = None
         self.action_history = []
 
         # 1. 플레이어 생성 (All use LLMAgent)
@@ -57,19 +45,19 @@ class MafiaGame:
             self.players[i].role = role_int
 
             # 로그 출력
-            role_name = self.role_names.get(role_int, "Unknown")
+            role_name = Role(role_int).name
             self._log(f"플레이어 {i}: {role_name} (LLM Agent)")
 
-        self.alive_status = [True for _ in range(config.game.PLAYER_COUNT)]
+        return self.get_game_status()
 
     def process_turn(
         self, action: int, ai_claim_role: int = -1
-    ) -> Tuple[Dict, bool, bool]:
+    ) -> Tuple[GameStatus, bool, bool]:
         is_over, is_win = self.check_game_over()
         if is_over:
-            return is_over, is_win
+            return self.get_game_status(), is_over, is_win
 
-        self._log(f"\n[Day {self.day_count} | {self.phase}]")
+        self._log(f"\n[Day {self.day_count} | {self.phase.name}]")
 
         # Merged phases: PHASE_DAY_CLAIM removed
         if self.phase == Phase.DAY_DISCUSSION:
@@ -87,7 +75,7 @@ class MafiaGame:
             self.day_count += 1
 
         is_over, is_win = self.check_game_over()
-        return self._get_game_status(), is_over, is_win
+        return self.get_game_status(), is_over, is_win
 
     def _process_day_discussion(self):
         self._log("  - 낮 토론 시작")
@@ -99,7 +87,7 @@ class MafiaGame:
                 if not p.alive:
                     continue
 
-                status_obj = self._get_game_status_obj(p.id)
+                status_obj = self.get_game_status(p.id)
                 p.observe(status_obj)
                 
                 # 대화 기록을 넘길 때 화자 ID를 포함한 JSON 전달
@@ -117,7 +105,7 @@ class MafiaGame:
                 claim = claim_dict.get("claim")
                 role_id = claim_dict.get("role")
                 target_id = claim_dict.get("target_id")
-                role_name = self.role_names.get(role_id, "알 수 없음")
+                role_name = Role(role_id).name if role_id is not None else "알 수 없음"
                 discussion_ended = claim_dict.get("discussion_status")
                 reason = claim_dict.get("reason", "")
 
@@ -170,7 +158,7 @@ class MafiaGame:
             if not p.alive:
                 continue
             
-            status_obj = self._get_game_status_obj(p.id)
+            status_obj = self.get_game_status(p.id)
             p.observe(status_obj)
             
             conversation_log_str = json.dumps(structured_votes, ensure_ascii=False)
@@ -193,8 +181,8 @@ class MafiaGame:
                 self._log(f"- 플레이어 {p.id}이(가) {target}에게 투표했습니다.")
                 self._log(f"  이유: {speech}")
 
-                self.players[target].voted_by_last_turn.append(p.id)
-                self.players[target].vote_history[p.id] += 1
+                # self.players[target].voted_by_last_turn.append(p.id) # Removed legacy
+                # self.players[target].vote_history[p.id] += 1 # Removed legacy
                 
                 self.action_history.append(GameEvent(
                     day=self.day_count,
@@ -231,25 +219,13 @@ class MafiaGame:
                 self._log(
                     f"  - 투표 동률 발생: {executed_targets}에 처형이 무산되었습니다."
                 )
-                self.last_execution_result = None
             else:
                 executed_target = executed_targets[0]
                 for p in self.players:
                     if not p.alive:
                         continue
                     
-                    status_obj = self._get_game_status_obj(p.id)
-                    # 처형 대상 정보 추가 (GameStatus에 필드가 없다면 임시로 추가하거나 action_history로 유추해야 함)
-                    # 여기서는 GameStatus에 execution_target 필드가 없으므로, 
-                    # LLMAgent._handle_final_vote에서 conversation_log나 별도 방식으로 전달해야 함.
-                    # 하지만 LLMAgent는 status.execution_target을 참조하려고 시도했음.
-                    # GameStatus 정의를 수정하거나 여기서 임시로 넣어줘야 함.
-                    # 일단 GameStatus 정의를 따르고, LLMAgent가 action_history에서 찾도록 하거나
-                    # conversation_log에 명시적으로 포함.
-                    
-                    # LLMAgent 수정본에서는 status.execution_target을 참조하지 않고
-                    # conversation_log나 status 어딘가에 있다고 가정했음.
-                    # 여기서는 conversation_log에 포함시켜 전달.
+                    status_obj = self.get_game_status(p.id)
                     
                     conversation_log_str = json.dumps(
                         structured_executes + [{"execution_target": executed_target}], ensure_ascii=False
@@ -323,7 +299,6 @@ class MafiaGame:
                     self._log(
                         f"  - {executed_target}번 플레이어는 처형되지 않았습니다."
                     )
-                    self.last_execution_result = None
                     self.action_history.append(GameEvent(
                         day=self.day_count,
                         phase=self.phase,
@@ -346,7 +321,7 @@ class MafiaGame:
             if p.role == Role.CITIZEN:
                 continue
             
-            status_obj = self._get_game_status_obj(p.id)
+            status_obj = self.get_game_status(p.id)
             p.observe(status_obj)
             
             conversation_log_str = ""  # No conversation log for night actions
@@ -388,10 +363,6 @@ class MafiaGame:
                 elif p.role == Role.POLICE:
                     police_target = target
                     # 경찰 결과는 즉시 알 수 있음 (다음 턴 observe에서 반영됨)
-                    # 하지만 여기서는 action_history에 결과를 담아서 다음 턴에 반영되도록 함
-                    # 혹은 즉시 반영? observe는 턴 시작 시 호출되므로 다음 턴에 반영됨.
-                    # 경찰에게만 보이는 정보여야 함.
-                    # GameStatus 생성 시 필터링 필요.
                     self.action_history.append(GameEvent(
                         day=self.day_count,
                         phase=self.phase,
@@ -402,32 +373,31 @@ class MafiaGame:
                     ))
 
         self._log("- 밤 행동 결과:")
-        no_death = True
         if mafia_target is not None:
             if mafia_target != doctor_target:
                 self.players[mafia_target].alive = False
                 self._log(f"  - {mafia_target}번 플레이어가 마피아에게 살해당했습니다.")
-                no_death = False
             else:
                 self._log(f"  - 의사가 {doctor_target}번 플레이어를 살려냈습니다.")
 
-        # 경찰 조사 결과 저장
+        # 경찰 조사 결과 저장 (로그만 출력, 데이터는 action_history에 있음)
         if police_target is not None:
-            role_name = self.role_names.get(self.players[police_target].role, "알 수 없음")
+            role_name = Role(self.players[police_target].role).name
             self._log(f"  - 경찰 조사: {police_target}번은 [{role_name}]입니다.")
-            self.police_logs[police_target] = self.players[police_target].role
 
-        self.last_night_result = {
-            "no_death": no_death,
-            "victim": mafia_target if not no_death else None,
-        }
-        self._update_alive_status()
+    def get_game_status(self, viewer_id: Optional[int] = None) -> GameStatus:
+        # Admin view if viewer_id is None
+        if viewer_id is None:
+            # Admin sees everything
+            return GameStatus(
+                day=self.day_count,
+                phase=self.phase,
+                my_id=-1,
+                my_role=Role.CITIZEN, # Dummy
+                players=[PlayerStatus(id=p.id, alive=p.alive) for p in self.players],
+                action_history=self.action_history
+            )
 
-    # (이하 _update_alive_status, _get_game_status, check_game_over 메서드는 Agent 참조만 수정해서 사용)
-    def _update_alive_status(self):
-        self.alive_status = [1 if p.alive else 0 for p in self.players]
-
-    def _get_game_status_obj(self, viewer_id: int) -> GameStatus:
         viewer = self.players[viewer_id]
         
         player_statuses = []
@@ -473,47 +443,6 @@ class MafiaGame:
             action_history=filtered_history
         )
 
-    def _get_game_status(self, viewer_id: Optional[int] = None) -> Dict:
-        is_admin = viewer_id is None
-        viewer = self.players[viewer_id] if not is_admin else None
-        status = {
-            "day": self.day_count,
-            "phase": self.phase,
-            "alive_status": self.alive_status,
-            "last_execution_result": self.last_execution_result,
-            "last_night_result": self.last_night_result,
-            "vote_records": self.vote_counts,
-        }
-        if is_admin:
-            status.update(
-                {
-                    "my_role": "ADMIN",
-                    "all_player_roles": {
-                        p.id: p.role for p in self.players
-                    },  # 전체 역할 명단
-                    "mafia_team_members": [
-                        p.id for p in self.players if p.role == Role.MAFIA
-                    ],
-                    "police_investigation_results": self.police_logs,
-                }
-            )
-        else:
-            status.update(
-                {
-                    "my_role": viewer.role,
-                    "mafia_team_members": (
-                        [p.id for p in self.players if p.role == Role.MAFIA]
-                        if viewer.role == Role.MAFIA
-                        else None
-                    ),
-                    "police_investigation_results": (
-                        self.police_logs if viewer.role == Role.POLICE else None
-                    ),
-                }
-            )
-
-        return status
-
     def check_game_over(self) -> Tuple[bool, bool]:
         mafia_count = sum(
             1 for p in self.players if p.role == Role.MAFIA and p.alive
@@ -532,7 +461,6 @@ class MafiaGame:
             return True, True
         elif mafia_count >= citizen_count:
             self._log(f"\n게임 종료: 마피아 승리!")
-            # [변경]
             return True, False
 
         return False, False
