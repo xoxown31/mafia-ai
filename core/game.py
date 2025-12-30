@@ -287,17 +287,18 @@ class MafiaGame:
                     self._log(f"  - 투표 결과: 찬성 {self.final_vote}표")
                     self._log(f"  - {executed_target}번 플레이어가 처형되었습니다.")
                     
+                    # === ROLE REVEAL: Show team alignment (Citizen Team vs Mafia Team) ===
+                    executed_role = self.players[executed_target].role
+                    
                     self.action_history.append(GameEvent(
                         day=self.day_count,
                         phase=self.phase,
                         event_type=EventType.EXECUTE,
                         actor_id=-1, # System
                         target_id=executed_target,
-                        value="SUCCESS"
+                        value=executed_role # 처형된 사람의 직업 공개
                     ))
 
-                    # === ROLE REVEAL: Show team alignment (Citizen Team vs Mafia Team) ===
-                    executed_role = self.players[executed_target].role
                     if executed_role == Role.MAFIA:
                         self._log(
                             f"  - [공개] {executed_target}번은 마피아 팀이었습니다!"
@@ -318,7 +319,7 @@ class MafiaGame:
                         event_type=EventType.EXECUTE,
                         actor_id=-1,
                         target_id=executed_target,
-                        value="FAIL"
+                        value=None # 실패 시 직업 공개 없음
                     ))
 
         self._update_alive_status()
@@ -418,23 +419,26 @@ class MafiaGame:
         
         player_statuses = []
         for p in self.players:
-            role = Role.UNKNOWN
-            if p.id == viewer_id:
-                role = p.role
-            elif viewer.role == Role.MAFIA and p.role == Role.MAFIA:
-                role = p.role
-            if viewer.role == Role.POLICE and p.id in self.police_logs:
-                role = self.police_logs[p.id]
-            if not p.alive:
-                 role = p.role
-
             player_statuses.append(PlayerStatus(
                 id=p.id,
-                alive=p.alive,
-                role=role
+                alive=p.alive
             ))
 
         filtered_history = []
+        
+        # [Mafia Team Info] Inject teammate info as system events
+        if viewer.role == Role.MAFIA:
+            for p in self.players:
+                if p.role == Role.MAFIA and p.id != viewer_id:
+                    filtered_history.append(GameEvent(
+                        day=0, # Game Start
+                        phase=Phase.DAY_DISCUSSION,
+                        event_type=EventType.POLICE_RESULT, # Treat as investigation result
+                        actor_id=-1, # System
+                        target_id=p.id,
+                        value=Role.MAFIA
+                    ))
+
         for event in self.action_history:
             if event.phase == Phase.NIGHT:
                 if event.actor_id == viewer_id:

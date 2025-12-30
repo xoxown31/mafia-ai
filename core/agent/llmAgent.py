@@ -27,20 +27,30 @@ class LLMAgent(BaseAgent):
         """객관적 사실(Fact) 반영"""
         for event in history:
             if event.event_type == EventType.EXECUTE:
-                # 처형된 플레이어는 확실히 죽음 (이미 alive status에 반영되지만, 신념에도 반영 가능)
-                pass
+                # 처형된 플레이어의 직업이 공개됨 (GameEvent.value에 Role 저장됨)
+                target_id = event.target_id
+                role_found = event.value
+                if target_id is not None and role_found is not None:
+                    try:
+                        role_idx = int(role_found)
+                        self.belief[target_id, role_idx] = 100.0
+                        # 다른 역할일 확률은 -100으로 (확실히 아님)
+                        for r in Role:
+                            if r != role_idx:
+                                self.belief[target_id, r] = -100.0
+                    except:
+                        pass
+
             elif event.event_type == EventType.POLICE_RESULT:
                 # 경찰 조사 결과 (내가 경찰일 때만 의미 있음, 혹은 공개된 경우)
                 # GameStatus에서 이미 필터링되어 들어오므로, 여기 있는 정보는 믿을 수 있음
                 target_id = event.target_id
                 role_found = event.value # Role Enum or int
                 if target_id is not None and role_found is not None:
-                    # role_found가 Role Enum인지 int인지 확인 필요. 
-                    # GameEvent value는 Any이므로 안전하게 처리
                     try:
                         role_idx = int(role_found)
                         self.belief[target_id, role_idx] = 100.0
-                        # 다른 역할일 확률은 0으로
+                        # 다른 역할일 확률은 -100으로
                         for r in Role:
                             if r != role_idx:
                                 self.belief[target_id, r] = -100.0
