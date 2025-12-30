@@ -170,7 +170,6 @@ class Launcher(QWidget):
 
         mode = "train" if self.radio_train.isChecked() else "test"
 
-        # args에 others_list 추가 (나중에 게임 로직에서 쓰기 위해)
         args = Namespace(
             agent=main_agent,  # 플레이어(Main)
             others=others_agents,  # 나머지 8명 리스트
@@ -179,5 +178,4 @@ class Launcher(QWidget):
             gui=True,
         )
 
-        print(f"Start: Main={main_agent}, Others={others_agents}")  # 디버깅용 출력
         self.start_simulation_signal.emit(args)
