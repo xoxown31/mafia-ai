@@ -149,7 +149,7 @@ class MafiaGame:
                     event_type=event_type,
                     actor_id=p.id,
                     target_id=target_id,
-                    value=role_id # 주장한 역할
+                    value=Role(role_id) if role_id is not None else None # 주장한 역할 (Role Enum)
                 ))
 
             if discussion_ended == "End":
@@ -202,7 +202,7 @@ class MafiaGame:
                     event_type=EventType.VOTE,
                     actor_id=p.id,
                     target_id=target,
-                    value=speech
+                    value=None # 투표 사유 제거
                 ))
             else:
                 self._log(f"- 플레이어 {p.id}이(가) 투표를 기권했습니다.")
@@ -290,13 +290,24 @@ class MafiaGame:
                     # === ROLE REVEAL: Show team alignment (Citizen Team vs Mafia Team) ===
                     executed_role = self.players[executed_target].role
                     
+                    # 1. 처형 성공 이벤트 (value=True)
                     self.action_history.append(GameEvent(
                         day=self.day_count,
                         phase=self.phase,
                         event_type=EventType.EXECUTE,
                         actor_id=-1, # System
                         target_id=executed_target,
-                        value=executed_role # 처형된 사람의 직업 공개
+                        value=True
+                    ))
+                    
+                    # 2. 직업 공개 이벤트 (POLICE_RESULT by System)
+                    self.action_history.append(GameEvent(
+                        day=self.day_count,
+                        phase=self.phase,
+                        event_type=EventType.POLICE_RESULT,
+                        actor_id=-1, # System
+                        target_id=executed_target,
+                        value=executed_role
                     ))
 
                     if executed_role == Role.MAFIA:
@@ -319,7 +330,7 @@ class MafiaGame:
                         event_type=EventType.EXECUTE,
                         actor_id=-1,
                         target_id=executed_target,
-                        value=None # 실패 시 직업 공개 없음
+                        value=False # 실패
                     ))
 
         self._update_alive_status()
@@ -361,7 +372,8 @@ class MafiaGame:
                         phase=self.phase,
                         event_type=EventType.KILL,
                         actor_id=p.id,
-                        target_id=target
+                        target_id=target,
+                        value=None
                     ))
                 elif p.role == Role.DOCTOR:
                     doctor_target = target
@@ -370,7 +382,8 @@ class MafiaGame:
                         phase=self.phase,
                         event_type=EventType.PROTECT,
                         actor_id=p.id,
-                        target_id=target
+                        target_id=target,
+                        value=None
                     ))
                 elif p.role == Role.POLICE:
                     police_target = target

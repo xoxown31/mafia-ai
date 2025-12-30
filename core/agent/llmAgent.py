@@ -26,36 +26,22 @@ class LLMAgent(BaseAgent):
     def update_belief(self, history: List[GameEvent]):
         """객관적 사실(Fact) 반영"""
         for event in history:
-            if event.event_type == EventType.EXECUTE:
-                # 처형된 플레이어의 직업이 공개됨 (GameEvent.value에 Role 저장됨)
+            # 경찰 조사 결과 (시스템 공개 포함)
+            if event.event_type == EventType.POLICE_RESULT:
                 target_id = event.target_id
-                role_found = event.value
-                if target_id is not None and role_found is not None:
-                    try:
-                        role_idx = int(role_found)
-                        self.belief[target_id, role_idx] = 100.0
-                        # 다른 역할일 확률은 -100으로 (확실히 아님)
-                        for r in Role:
-                            if r != role_idx:
-                                self.belief[target_id, r] = -100.0
-                    except:
-                        pass
+                role_found = event.value # Role Enum
+                
+                if target_id is not None and isinstance(role_found, Role):
+                    role_idx = int(role_found)
+                    self.belief[target_id, role_idx] = 100.0
+                    # 다른 역할일 확률은 -100으로
+                    for r in Role:
+                        if r != role_idx:
+                            self.belief[target_id, r] = -100.0
 
-            elif event.event_type == EventType.POLICE_RESULT:
-                # 경찰 조사 결과 (내가 경찰일 때만 의미 있음, 혹은 공개된 경우)
-                # GameStatus에서 이미 필터링되어 들어오므로, 여기 있는 정보는 믿을 수 있음
-                target_id = event.target_id
-                role_found = event.value # Role Enum or int
-                if target_id is not None and role_found is not None:
-                    try:
-                        role_idx = int(role_found)
-                        self.belief[target_id, role_idx] = 100.0
-                        # 다른 역할일 확률은 -100으로
-                        for r in Role:
-                            if r != role_idx:
-                                self.belief[target_id, r] = -100.0
-                    except:
-                        pass
+            # 처형 결과 (성공/실패 여부만 확인, 역할 공개는 POLICE_RESULT로 처리됨)
+            elif event.event_type == EventType.EXECUTE:
+                pass
 
     def get_action(self, conversation_log: str) -> str:
         """주관적 추론(Hunch) 및 결정"""

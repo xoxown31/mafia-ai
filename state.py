@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import List, Optional, Union
 from config import Role, Phase, EventType
 
 class PlayerStatus(BaseModel):
@@ -13,7 +13,7 @@ class GameEvent(BaseModel):
     event_type: EventType
     actor_id: int
     target_id: Optional[int] = None
-    value: Any = None
+    value: Union[Role, bool, None] = None
 
 class GameStatus(BaseModel):
     day: int
