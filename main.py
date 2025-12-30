@@ -1,3 +1,4 @@
+import sys
 import argparse
 import os
 import threading
@@ -7,8 +8,10 @@ from core.env import MafiaEnv
 from core.game import MafiaGame  # LLM 에이전트용 MafiaGame 직접 임포트
 from ai.ppo import PPO
 from ai.reinforce import REINFORCEAgent
+from PyQt6.QtWidgets import QApplication
 from core.runner import train, test
 from utils.analysis import analyze_log_file
+from gui.launcher import Launcher
 
 # GUI 모듈 임포트 (gui 패키지가 없어도 에러 안 나게 처리)
 try:
@@ -23,7 +26,7 @@ def run_simulation(args):
     """
     기존 main() 함수에 있던 AI 학습/테스트 로직을 별도 함수로 분리
     """
-    # 로그 폴더 생성
+
     log_dir = "logs"
     os.makedirs(log_dir, exist_ok=True)
     log_file_path = os.path.join(log_dir, "mafia_game_log.txt")
@@ -52,6 +55,7 @@ def run_simulation(args):
             state_dim = env.observation_space["observation"].shape[0]
             action_dim = env.action_space.n
 
+            # 에이전트 추가시 수정 부분
             if args.agent == "ppo":
                 agent = PPO(state_dim, action_dim)
             elif args.agent == "reinforce":
@@ -76,49 +80,50 @@ def run_simulation(args):
     print("Simulation finished.")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Mafia AI Training/Testing Script")
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default="train",
-        choices=["train", "test"],
-        help="Execution mode (ignored for 'llm' agent)",
-    )
-    parser.add_argument(
-        "--agent",
-        type=str,
-        default="ppo",
-        choices=["ppo", "reinforce", "llm"],  # llm 옵션 추가
-        help="Agent type",
-    )
-    parser.add_argument(
-        "--episodes", type=int, default=1000, help="Number of training episodes"
-    )
-    parser.add_argument(
-        "--gui", action="store_true", help="Launch GUI viewer alongside simulation"
-    )
-    args = parser.parse_args()
+def start_gui():
+    app = QApplication(sys.argv)
+    launcher = Launcher()
 
-    # GUI 실행 옵션이 켜져 있고, GUI 모듈을 불러올 수 있다면
-    if args.gui and GUI_AVAILABLE:
-        print("Launching GUI with Simulation...")
-
-        # 1. AI 시뮬레이션을 별도 스레드로 실행 (Daemon=True: 창 끄면 같이 꺼짐)
+    def on_simulation_start(args):
         sim_thread = threading.Thread(target=run_simulation, args=(args,), daemon=True)
         sim_thread.start()
 
-        # 2. 메인 스레드에서 GUI 실행
-        root = tk.Tk()
-        app = MafiaLogViewerApp(root)
+    # 시그널 연결
+    launcher.start_simulation_signal.connect(on_simulation_start)
 
-        root.mainloop()
+    launcher.show()
+    sys.exit(app.exec())
 
+
+def main():
+    if len(sys.argv) > 1:
+        parser = argparse.ArgumentParser(description="Mafia AI Training/Testing Script")
+        parser.add_argument(
+            "--mode", type=str, default="train", choices=["train", "test"]
+        )
+        parser.add_argument(
+            "--agent", type=str, default="ppo", choices=["ppo", "reinforce", "llm"]
+        )
+        parser.add_argument("--episodes", type=int, default=1000)
+        parser.add_argument("--gui", action="store_true")  # Legacy
+        args = parser.parse_args()
+
+        if args.gui and GUI_AVAILABLE:
+            # 기존 Tkinter 뷰어 실행 로직 (유지)
+            print("Launching Legacy GUI with Simulation...")
+            sim_thread = threading.Thread(
+                target=run_simulation, args=(args,), daemon=True
+            )
+            sim_thread.start()
+            root = tk.Tk()
+            root.mainloop()
+        else:
+            run_simulation(args)
+
+    # 인자가 없으면 -> GUI 실행
     else:
-        # GUI 없이 실행 (기존 방식)
-        if args.gui and not GUI_AVAILABLE:
-            print("Warning: GUI module not found. Running in console mode.")
-        run_simulation(args)
+        print("Start GUI")
+        start_gui()
 
 
 if __name__ == "__main__":

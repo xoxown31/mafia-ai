@@ -32,7 +32,7 @@ class Launcher(QWidget):
         title.setStyleSheet("font-size: 20px; font-weight: bold;")
         layout.addWidget(title)
 
-        # 1. 에이전트 선택
+        # 에이전트 추가시 수정 부분
         agent_group = QGroupBox("플레이어 에이전트")
         agent_layout = QVBoxLayout()
         self.agent_combo = QComboBox()
@@ -61,7 +61,7 @@ class Launcher(QWidget):
         ep_layout = QVBoxLayout()
         self.ep_spin = QSpinBox()
         self.ep_spin.setRange(1, 10000)
-        self.ep_spin.setValue(10)
+        self.ep_spin.setValue(1)
         ep_layout.addWidget(self.ep_spin)
         ep_group.setLayout(ep_layout)
         layout.addWidget(ep_group)
@@ -86,36 +86,10 @@ class Launcher(QWidget):
 
     def on_click_start(self):
         agent = self.agent_combo.currentText()
-        mode = "train" if self.radio_train.isChecked() else "test"
-
-        if agent == "llm" and mode == "train":
-            QMessageBox.warning(
-                self,
-                "주의",
-                "LLM 에이전트는 학습 모드를 지원하지 않습니다.\nTest 모드로 진행해주세요.",
-            )
-            return
+        mode = "train" if self.radio_train.isChecked() else "test"  # train ot test
 
         args = Namespace(
             agent=agent, mode=mode, episodes=self.ep_spin.value(), gui=True
         )
 
         self.start_simulation_signal.emit(args)
-
-    def start(self):
-        self.show()
-
-
-# if __name__ == "__main__":
-#     import sys
-#     from PyQt6.QtWidgets import QApplication
-
-#     # 1. 어플리케이션 객체 생성 (필수)
-#     app = QApplication(sys.argv)
-
-#     # 2. 런처 생성 및 실행
-#     launcher = Launcher()
-#     launcher.start()  # self.show() 호출
-
-#     # 3. 이벤트 루프 실행 (창이 꺼지지 않게 유지)
-#     sys.exit(app.exec())
