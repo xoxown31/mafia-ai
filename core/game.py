@@ -90,7 +90,7 @@ class MafiaGame:
         self._log("  - 낮 토론: 플레이어들이 의견을 나누고 의심도를 갱신합니다.")
         structured_claims = []  # Store all claims in new dictionary format
 
-        MAX_DEBATE_ROUNDS = 5  # 최대 토론 라운드 수
+        MAX_DEBATE_ROUNDS = 2  # 최대 토론 라운드 수
         for debate_round in range(MAX_DEBATE_ROUNDS):
             self._log(f"  - 토론 라운드 {debate_round + 1}")
             discussion_ended = False
@@ -99,24 +99,27 @@ class MafiaGame:
                 if not p.alive:
                     continue
 
-                # LLMAgent.get_action에 맞는 파라미터 전달
+    def _process_day_discussion(self):
+        self._log("  - 낮 토론 시작")
+        structured_claims = []
+
+        MAX_DEBATE_ROUNDS = 2
+        for debate_round in range(MAX_DEBATE_ROUNDS):
+            for p in self.players:
+                if not p.alive:
+                    continue
+
                 game_state_dict = self._get_game_status()
+                # 대화 기록을 넘길 때 화자 ID를 포함한 JSON 전달
                 conversation_log_str = json.dumps(structured_claims, ensure_ascii=False)
 
-                # get_action 호출 및 JSON 파싱
                 response_str = p.get_action(game_state_dict, conversation_log_str)
                 try:
                     claim_dict = json.loads(response_str)
-                except json.JSONDecodeError:
-                    self._log(
-                        f"  - 플레이어 {p.id}: 잘못된 JSON 응답 수신. 토론을 건너뜁니다."
-                    )
+                except:
                     continue
 
-                # 토론 종료 제안 확인
                 if claim_dict.get("discussion_status") == "End":
-                    self._log(f"  - 플레이어 {p.id}이(가) 토론 종료를 제안합니다.")
-                    discussion_ended = True
                     break
 
                 claim = claim_dict.get("claim")
@@ -135,7 +138,6 @@ class MafiaGame:
                     speech = f"- 플레이어 {p.id}이(가) 침묵합니다."
 
                 self._log(speech)
-
                 # structured_claims에 추가
                 structured_claims.append(
                     {
@@ -175,8 +177,7 @@ class MafiaGame:
                 continue
 
             target = vote_dict.get("target_id")
-            speech = vote_dict.get("reasoning")
-
+            speech = vote_dict.get("reason")
             # [FIX] target이 None인 경우를 방지하여 TypeError를 막음
             if target is not None and target != -1:
                 self.vote_counts[target] += 1
@@ -309,7 +310,7 @@ class MafiaGame:
             else:
                 self._log(f"  - 의사가 {doctor_target}을(를) 살려냈습니다.")
                 no_death = True
-        
+
         # 경찰 조사 결과 로그 (경찰이 있고, 대상을 지정했을 때만)
         if police_target is not None:
             # 역할 이름 찾기
@@ -338,9 +339,9 @@ class MafiaGame:
     def _get_game_status(self) -> Dict:
         return {
             "day": self.day_count,
-            "phase": self.phase,
             "alive_status": self.alive_status,
-            "roles": [p.role for p in self.players],
+            "last_execution_result": self.last_execution_result,
+            "last_night_result": self.last_night_result,
         }
 
     def check_game_over(self) -> Tuple[bool, bool]:
