@@ -56,13 +56,12 @@ class MafiaGame:
         return self.get_game_status(), is_over, is_win
 
     def _process_discussion(self):
-        claims = []
         for _ in range(2):
             ended = False
             for p in self.players:
                 if not p.alive: continue
                 p.observe(self.get_game_status(p.id))
-                resp = p.get_action(json.dumps(claims, ensure_ascii=False))
+                resp = p.get_action()
                 try:
                     data = json.loads(resp)
                     if data.get("discussion_status") == "End":
@@ -73,7 +72,6 @@ class MafiaGame:
                     target_id = data.get("target_id")
                     self._log(f"플레이어 {p.id}: {data.get('reason', '')}")
                     
-                    claims.append({"speaker": p.id, "content": data.get("reason")})
                     self.history.append(GameEvent(
                         day=self.day, phase=self.phase, event_type=EventType.CLAIM,
                         actor_id=p.id, target_id=target_id, 
@@ -81,15 +79,20 @@ class MafiaGame:
                     ))
                 except: continue
             if ended: break
+        
+        # Phase End: Update Beliefs
+        for p in self.players:
+            if p.alive:
+                p.observe(self.get_game_status(p.id))
+                p.update_belief(self.history)
 
     def _process_vote(self):
         votes = [0] * len(self.players)
-        logs = []
         for p in self.players:
             if not p.alive: continue
             p.observe(self.get_game_status(p.id))
             try:
-                data = json.loads(p.get_action(json.dumps(logs, ensure_ascii=False)))
+                data = json.loads(p.get_action())
                 target = data.get("target_id")
                 if target is not None and target != -1:
                     votes[target] += 1
@@ -97,9 +100,14 @@ class MafiaGame:
                         day=self.day, phase=self.phase, event_type=EventType.VOTE,
                         actor_id=p.id, target_id=target, value=None
                     ))
-                logs.append({"voter": p.id, "target": target})
             except: continue
         self._last_votes = votes
+
+        # Phase End: Update Beliefs
+        for p in self.players:
+            if p.alive:
+                p.observe(self.get_game_status(p.id))
+                p.update_belief(self.history)
 
     def _process_execute(self):
         max_v = max(self._last_votes)
@@ -112,7 +120,7 @@ class MafiaGame:
                     if not p.alive: continue
                     p.observe(self.get_game_status(p.id))
                     try:
-                        data = json.loads(p.get_action(f"Target: {target_id}"))
+                        data = json.loads(p.get_action())
                         final_score += data.get("agree_execution", 0)
                     except: continue
                 
@@ -129,13 +137,19 @@ class MafiaGame:
                     actor_id=-1, target_id=target_id, value=success
                 ))
 
+        # Phase End: Update Beliefs
+        for p in self.players:
+            if p.alive:
+                p.observe(self.get_game_status(p.id))
+                p.update_belief(self.history)
+
     def _process_night(self):
         m_target, d_target, p_target = None, None, None
         for p in self.players:
             if not p.alive or p.role == Role.CITIZEN: continue
             p.observe(self.get_game_status(p.id))
             try:
-                data = json.loads(p.get_action(""))
+                data = json.loads(p.get_action())
                 target = data.get("target_id")
                 if target is not None and self.players[target].alive:
                     if p.role == Role.MAFIA: 
@@ -152,6 +166,12 @@ class MafiaGame:
         if m_target is not None and m_target != d_target:
             self.players[m_target].alive = False
             self._log(f"살해 발생: {m_target}")
+
+        # Phase End: Update Beliefs
+        for p in self.players:
+            if p.alive:
+                p.observe(self.get_game_status(p.id))
+                p.update_belief(self.history)
 
     def get_game_status(self, viewer_id: Optional[int] = None) -> GameStatus:
         if viewer_id is None:

@@ -1,4 +1,35 @@
-DISCUSSION:
+BELIEF_UPDATE:
+  system: |
+    당신은 마피아 게임을 하는 AI 플레이어입니다. 당신의 역할과 생각은 프롬프트에 주어집니다. 반드시 당신에게 주어진 역할에 입각해서만 추론하고 JSON 형식으로만 답변해야 합니다. 다른 사람의 역할을 흉내내지 마십시오.
+  user: |
+    ### TASK: BELIEF UPDATE (신념 갱신)
+    - **당신의 역할**: [{role_name}]
+    - **당신의 ID**: {id}
+
+    ### [GAME STATE]
+    {status_json}
+
+    ### [HISTORY ANALYSIS]
+    오늘 발생한 사건들(`action_history`)을 분석하여 플레이어들의 정체 확률을 조정하십시오.
+    - 누가 거짓말을 하고 있는가?
+    - 누가 시민 팀에 유리한 행동을 했는가?
+    - 누가 마피아 팀으로 의심되는가?
+
+    ### [CURRENT BELIEF MATRIX]
+    {belief_matrix}
+
+    ### [OUTPUT FORMAT (JSON)]
+    {{
+        "belief_updates": [
+            {{
+                "player_id": int,
+                "role": "MAFIA"|"POLICE"|"DOCTOR"|"CITIZEN",
+                "delta": int (Range: -100 to 100)
+            }}
+        ]
+    }}
+
+DAY_DISCUSSION:
   system: |
     당신은 마피아 게임을 하는 AI 플레이어입니다. 당신의 역할과 생각은 프롬프트에 주어집니다. 반드시 당신에게 주어진 역할에 입각해서만 추론하고 JSON 형식으로만 답변해야 합니다. 다른 사람의 역할을 흉내내지 마십시오.
   user: |
@@ -15,15 +46,14 @@ DISCUSSION:
     ### [GAME STATE]
     {status_json}
 
-    ### [CONVERSATION LOG]
-    {conversation_log}
+    ### [HISTORY ANALYSIS]
+    제공된 [GAME STATE] 내의 `action_history`는 발생한 사건들의 순서입니다. 이를 바탕으로 누가 거짓말을 하고 있는지, 누구의 주장이 일관된지 추론하십시오.
 
     ### [BELIEF MATRIX SUMMARY]
     {belief_matrix}
 
     ### 출력 포맷 (반드시 JSON 형식 준수)
     {{
-        "belief_updates": [{{"player_id": int, "role": "MAFIA"|"POLICE"|"DOCTOR"|"CITIZEN", "delta": int}}],
         "action_strategy": {{
             "biases": [float], "silence_bias": float, "strategy_note": "전략 요약"
         }},
@@ -34,15 +64,20 @@ DISCUSSION:
         "discussion_status": "Proceed"|"End"
     }}
 
-VOTE:
+DAY_VOTE:
   system: |
     당신은 마피아 게임을 하는 AI 플레이어입니다. 당신의 역할과 생각은 프롬프트에 주어집니다. 반드시 당신에게 주어진 역할에 입각해서만 추론하고 JSON 형식으로만 답변해야 합니다. 다른 사람의 역할을 흉내내지 마십시오.
   user: |
     ### TASK: DAY VOTE
     당신은 [{role_name}]입니다. 오늘 누구를 처형할지 결정하십시오.
     [상태]: {status_json}
-    [대화]: {conversation_log}
+    
+    ### [HISTORY ANALYSIS]
+    제공된 [GAME STATE] 내의 `action_history`를 분석하여 투표 대상을 결정하십시오.
     -1은 기권을 의미합니다.
+
+    ### [BELIEF MATRIX SUMMARY]
+    {belief_matrix}
 
     ### [OUTPUT FORMAT (JSON)]
     {{
@@ -50,7 +85,7 @@ VOTE:
         "reason": "투표 이유"
     }}
 
-FINAL_VOTE:
+DAY_EXECUTE:
   system: |
     당신은 마피아 게임을 하는 AI 플레이어입니다. 당신의 역할과 생각은 프롬프트에 주어집니다. 반드시 당신에게 주어진 역할에 입각해서만 추론하고 JSON 형식으로만 답변해야 합니다. 다른 사람의 역할을 흉내내지 마십시오.
   user: |
@@ -60,6 +95,9 @@ FINAL_VOTE:
 
     ### [FULL GAME STATE]
     {status_json}
+
+    ### [BELIEF MATRIX SUMMARY]
+    {belief_matrix}
 
     ### INSTRUCTIONS
     - 제공된 게임 상태와 당신의 신념 매트릭스를 종합하여 합리적인 결정을 내리십시오.
@@ -81,6 +119,9 @@ NIGHT:
 
     ### [GAME STATE]
     {status_json}
+
+    ### [BELIEF MATRIX SUMMARY]
+    {belief_matrix}
 
     ### INSTRUCTIONS
     1.  **당신의 역할에 맞는 행동을 수행하십시오.**
