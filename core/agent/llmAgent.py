@@ -39,6 +39,98 @@ class LLMAgent(BaseAgent):
         self.json_format_block = self.yaml_data.get("JSON_FORMAT_BLOCK", "")
         self.game_data_block = self.yaml_data.get("GAME_DATA_BLOCK", "")
 
+    def _phase_to_korean(self, phase: Phase) -> str:
+        """Phase enum을 한글로 변환"""
+        phase_map = {
+            Phase.DAY_DISCUSSION: "낮 토론",
+            Phase.DAY_VOTE: "투표",
+            Phase.DAY_EXECUTE: "처형 여부 결정",
+            Phase.NIGHT: "밤",
+        }
+        return phase_map.get(phase, phase.name)
+    
+    def _group_events_by_day_phase(self, events: List[GameEvent]) -> dict:
+        """이벤트를 day와 phase로 그룹화"""
+        from collections import defaultdict
+        grouped = defaultdict(list)
+        for event in events:
+            key = (event.day, event.phase)
+            grouped[key].append(event)
+        return dict(sorted(grouped.items()))
+    
+    def _format_event(self, event: GameEvent) -> str:
+        """GameEvent를 자연어 문장으로 변환"""
+        event_type = event.event_type
+        actor = f"Player {event.actor_id}" if event.actor_id != -1 else "시스템"
+        target = f"Player {event.target_id}" if event.target_id != -1 else "없음"
+        
+        if event_type == EventType.CLAIM:
+            role_name = Role(event.value).name if event.value is not None else "알 수 없음"
+            if event.actor_id == event.target_id:
+                return f"{actor}가 자신이 {role_name}이라고 주장했습니다."
+            else:
+                return f"{actor}가 {target}을(를) {role_name}(이)라고 주장했습니다."
+        
+        elif event_type == EventType.VOTE:
+            return f"{actor}가 {target}에게 투표했습니다."
+        
+        elif event_type == EventType.ROLE_ASSIGN:
+            role_name = Role(event.value).name if event.value is not None else "알 수 없음"
+            return f"{target}에게 {role_name} 역할이 배정되었습니다."
+        
+        elif event_type == EventType.EXECUTE:
+            role_name = Role(event.value).name if event.value is not None else "알 수 없음"
+            return f"{target}({role_name})이(가) 처형되었습니다."
+        
+        elif event_type == EventType.KILL:
+            return f"{actor}가 {target}을(를) 살해 대상으로 지목했습니다."
+        
+        elif event_type == EventType.PROTECT:
+            return f"{actor}가 {target}을(를) 보호했습니다."
+        
+        elif event_type == EventType.POLICE_RESULT:
+            role_name = Role(event.value).name if event.value is not None else "알 수 없음"
+            return f"{actor}가 {target}을(를) 조사한 결과 {role_name}입니다."
+        
+        else:
+            return f"알 수 없는 이벤트: {event_type.name}"
+    
+    def _format_game_status(self) -> str:
+        """
+        GameStatus를 LLM이 이해하기 쉬운 형태로 변환합니다.
+        
+        Returns:
+            자연어 형식의 게임 상태 설명
+        """
+        status = self.current_status
+        lines = []
+        
+        # 기본 정보
+        lines.append(f"### 현재 게임 상태")
+        lines.append(f"- Day {status.day}, {self._phase_to_korean(status.phase)}")
+        lines.append("")
+        
+        # 생존자 목록
+        alive_players = [p.id for p in status.players if p.alive]
+        dead_players = [p.id for p in status.players if not p.alive]
+        lines.append(f"### 생존자: {', '.join(f'Player {pid}' for pid in alive_players)}")
+        if dead_players:
+            lines.append(f"### 사망자: {', '.join(f'Player {pid}' for pid in dead_players)}")
+        lines.append("")
+        
+        # 이벤트 히스토리 (자연어 변환)
+        lines.append("### 게임 이벤트 기록")
+        if not status.action_history:
+            lines.append("아직 이벤트가 없습니다.")
+        else:
+            grouped_events = self._group_events_by_day_phase(status.action_history)
+            for (day, phase), events in grouped_events.items():
+                lines.append(f"\n**Day {day}, {self._phase_to_korean(phase)}:**")
+                for event in events:
+                    lines.append(f"  - {self._format_event(event)}")
+        
+        return "\n".join(lines)
+
     def update_belief(self, history: List[GameEvent]):
         # 1. Hard-coded Update (Fact)
         for event in history:
@@ -178,10 +270,13 @@ class LLMAgent(BaseAgent):
         # 신뢰도 행렬을 마크다운 테이블로 변환
         belief_markdown = self._belief_to_markdown()
         
+        # 게임 상태를 읽기 쉬운 형태로 변환
+        formatted_status = self._format_game_status()
+        
         game_data = self.game_data_block.format(
             role_name=self.role.name,
             id=self.id,
-            status_json=status_json,
+            game_status=formatted_status,
             belief_matrix=belief_markdown,
             conversation_log=conversation_log,
         )

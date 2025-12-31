@@ -56,8 +56,9 @@ GAME_DATA_BLOCK: &game_data_block |
   ## [GAME DATA FORMAT]
   - 당신의 역할: {role_name} / ID: {id}
   - 현재 신념 행렬: {belief_matrix}
-  - 게임 상태 및 이력: {status_json}
-  - 대화 및 행동 기록 : {conversation_log}
+  - 게임 상태:
+  {game_status}
+  - 대화 및 행동 기록: {conversation_log}
 
 # ==========================================================
 # 2. 인지 및 복기 단계 (BELIEF UPDATE)
