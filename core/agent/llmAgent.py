@@ -91,6 +91,9 @@ class LLMAgent(BaseAgent):
             MafiaAction 객체
         """
         target_id = action_dict.get("target_id", -1)
+        # target_id가 None인 경우 -1로 처리
+        if target_id is None:
+            target_id = -1
         role_str = action_dict.get("role")
         discussion_status = action_dict.get("discussion_status", "Continue")
         
