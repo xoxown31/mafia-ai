@@ -124,7 +124,14 @@ class MafiaGame:
 
                 target = data.get("target_id")
                 reason = data.get("reason", "")
-                self._log(f"플레이어 {p.id} 투표: {target}. 이유: {reason}")
+
+                if target == p.id:
+                    self._log(
+                        f"플레이어 {p.id}는 자신에게 투표할 수 없습니다. 투표 무효 처리."
+                    )
+                    target = -1
+                else:
+                    self._log(f"플레이어 {p.id} 투표: {target}. 이유: {reason}")
 
                 if target is not None and target != -1:
                     votes[target] += 1
