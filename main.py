@@ -43,8 +43,8 @@ def run_simulation(args):
             done = False
             while not done:
                 # LLM 에이전트는 내부적으로 스스로 행동을 결정하므로,
-                # process_turn에 전달하는 action은 의미 없음 (-1 전달)
-                status, done, win = game.process_turn(action=-1)
+                # process_turn에 전달하는 action은 의미 없음
+                status, done, win = game.process_turn()
             print("\nLLM simulation finished. Winner determined by game log.")
 
         # PPO 또는 REINFORCE 에이전트 모드

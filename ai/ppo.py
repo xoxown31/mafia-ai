@@ -1,21 +1,21 @@
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical
-import config
+from config import config
 from ai.model import ActorCritic
 from ai.buffer import RolloutBuffer
 
 class PPO:
     def __init__(self, state_dim, action_dim):
-        self.gamma = config.GAMMA
-        self.eps_clip = config.EPS_CLIP
-        self.k_epochs = config.K_EPOCHS
-        self.lr = config.LR
+        self.gamma = config.train.GAMMA
+        self.eps_clip = config.train.EPS_CLIP
+        self.k_epochs = config.train.K_EPOCHS
+        self.lr = config.train.LR
         
         # 새로운 하이퍼파라미터
-        self.entropy_coef = config.ENTROPY_COEF
-        self.value_loss_coef = config.VALUE_LOSS_COEF
-        self.max_grad_norm = config.MAX_GRAD_NORM
+        self.entropy_coef = config.train.ENTROPY_COEF
+        self.value_loss_coef = config.train.VALUE_LOSS_COEF
+        self.max_grad_norm = config.train.MAX_GRAD_NORM
         
         # 데이터 수집을 위한 버퍼 생성
         self.buffer = RolloutBuffer()

@@ -2,15 +2,15 @@ import torch
 import torch.optim as optim
 from torch.distributions import Categorical
 from ai.model import ActorCritic
-import config
+from config import config
 
 class REINFORCEAgent:
     def __init__(self, state_dim, action_dim):
         # 우리가 만든 ActorCritic 모델 가져오기
         self.policy = ActorCritic(state_dim, action_dim)
         # Optimizer 연결 (config.py의 LR 사용)
-        self.optimizer = optim.Adam(self.policy.parameters(), lr=config.LR)
-        self.gamma = config.GAMMA
+        self.optimizer = optim.Adam(self.policy.parameters(), lr=config.train.LR)
+        self.gamma = config.train.GAMMA
         
         # REINFORCE용 간단한 메모리 (Buffer 클래스 없이 리스트로 처리)
         self.log_probs = []
