@@ -23,15 +23,22 @@ from config import Role, Phase, EventType
 class LogManager:
     """게임 이벤트 로깅 및 해석 매니저"""
 
-    def __init__(self, experiment_name: str, log_dir: str = "./logs"):
+    def __init__(
+        self, 
+        experiment_name: str, 
+        log_dir: str = "./logs", 
+        use_tensorboard: bool = True
+    ):
         """
         Args:
             experiment_name: 실험 이름 (예: "ppo_mlp_20231231")
             log_dir: 로그 저장 디렉토리
+            use_tensorboard: TensorBoard 사용 여부 (학습 에이전트가 없으면 False)
         """
         self.experiment_name = experiment_name
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.use_tensorboard = use_tensorboard
 
         # 타임스탬프 기반 고유 디렉토리 생성
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -42,16 +49,18 @@ class LogManager:
         self.jsonl_path = self.session_dir / "events.jsonl"
         self.jsonl_file = open(self.jsonl_path, "w", encoding="utf-8")
 
-        # TensorBoard writer
-        tensorboard_dir = self.session_dir / "tensorboard"
-        self.writer = SummaryWriter(log_dir=str(tensorboard_dir))
+        # TensorBoard writer (조건부 생성)
+        self.writer = None
+        if use_tensorboard:
+            tensorboard_dir = self.session_dir / "tensorboard"
+            self.writer = SummaryWriter(log_dir=str(tensorboard_dir))
+            print(f"  - TensorBoard: {tensorboard_dir}")
 
         # 내러티브 템플릿 로드
         self.narrative_templates = self._load_narrative_templates()
 
         print(f"[LogManager] Initialized: {self.session_dir}")
         print(f"  - JSONL: {self.jsonl_path}")
-        print(f"  - TensorBoard: {tensorboard_dir}")
 
     def _load_narrative_templates(self) -> Dict[str, str]:
         """YAML에서 내러티브 템플릿 로드"""
@@ -95,7 +104,10 @@ class LogManager:
         win_rate: Optional[float] = None,
         **kwargs,
     ):
-        """TensorBoard에 학습 메트릭 기록"""
+        """TensorBoard에 학습 메트릭 기록 (TensorBoard 사용 시에만)"""
+        if not self.use_tensorboard or self.writer is None:
+            return
+        
         self.writer.add_scalar("Reward/Total", total_reward, episode)
         self.writer.add_scalar("Win/IsWin", 1 if is_win else 0, episode)
 

@@ -1,6 +1,7 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+from typing import Dict, Any
 from core.game import MafiaGame
 from config import *
 
@@ -113,14 +114,15 @@ class MafiaEnv(gym.Env):
             # PlayerStatus 사용 (status.players는 List[PlayerStatus])
             my_status = next(p for p in status.players if p.id == my_id)
             
-            # 액션 Dict에서 정보 추출 (last_action이 Dict로 변환됨)
-            action_dict = self.game.players[my_id].last_action
+            # 액션 Dict에서 정보 추출 (last_action은 discrete index)
+            # get_action()이 Dict로 변환하므로 직접 action을 사용
+            action_dict = self._action_to_dict(action)
             if isinstance(action_dict, dict):
-                target = action_dict.get('target', -1)
-                claim_role = action_dict.get('claim_role', -1)
+                target = action_dict.get('target_id', -1)
+                claim_role = action_dict.get('role', None)
                 
                 # === [역할 주장 보상] ===
-                if claim_role != -1:
+                if claim_role is not None:
                     if claim_role == my_role:
                         reward += 2.0
                         if my_role in [Role.POLICE, Role.DOCTOR]:
@@ -145,6 +147,9 @@ class MafiaEnv(gym.Env):
                         reward += self._calculate_doctor_reward(prev_alive, target, prev_phase)
 
         return self._encode_observation(status), reward, done, False, {}
+    
+    def _action_to_dict(self, action_idx: int) -> Dict[str, Any]:
+        """\uc561\uc158 \uc778\ub371\uc2a4\ub97c \ub515\uc154\ub108\ub9ac\ub85c \ubcc0\ud658 (RLAgent\uc640 \ub3d9\uc77c\ud55c \ub85c\uc9c1)"""\n        if 0 <= action_idx <= 7:\n            return {\"target_id\": int(action_idx), \"role\": None}\n        elif action_idx == 8:\n            return {\"target_id\": -1, \"role\": None}\n        elif action_idx == 9:\n            return {\"target_id\": -1, \"role\": Role.CITIZEN}\n        elif action_idx == 10:\n            return {\"target_id\": -1, \"role\": Role.POLICE}\n        elif action_idx == 11:\n            return {\"target_id\": -1, \"role\": Role.DOCTOR}\n        elif action_idx == 12:\n            return {\"target_id\": -1, \"role\": Role.MAFIA}\n        elif 13 <= action_idx <= 20:\n            return {\"target_id\": int(action_idx - 13), \"role\": Role.POLICE}\n        else:\n            return {\"target_id\": -1, \"role\": None}
 
     def _get_action_mask(self):
         mask = np.ones(21, dtype=np.int8)  # 21개 액션으로 확장
@@ -301,7 +306,7 @@ class MafiaEnv(gym.Env):
         reward = 0.0
         
         # 치료 성공 확인 (사망자가 없었으면 치료 성공)
-        current_alive_count = sum(self.game.alive_status)
+        current_alive_count = sum(p.alive for p in self.game.players)
         prev_alive_count = sum(prev_alive)
         
         if current_alive_count == prev_alive_count:

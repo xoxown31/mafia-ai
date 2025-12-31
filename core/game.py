@@ -4,11 +4,17 @@ import json
 from config import config, Role, Phase, EventType
 from state import GameStatus, GameEvent, PlayerStatus
 from core.agent.llmAgent import LLMAgent
+from core.agent.baseAgent import BaseAgent
 
 
 class MafiaGame:
-    def __init__(self, log_file=None):
-        self.players: List[LLMAgent] = []
+    def __init__(self, log_file=None, agents: Optional[List[BaseAgent]] = None):
+        """
+        Args:
+            log_file: \ub85c\uadf8 \ud30c\uc77c \ud578\ub4e4
+            agents: \uc678\ubd80\uc5d0\uc11c \uc8fc\uc785\ubc1b\uc744 \uc5d0\uc774\uc804\ud2b8 \ub9ac\uc2a4\ud2b8 (\uc120\ud0dd\uc801)
+        """
+        self.players: List[BaseAgent] = agents if agents is not None else []
         self.day = 1
         self.phase = Phase.DAY_DISCUSSION
         self.history: List[GameEvent] = []
@@ -19,17 +25,27 @@ class MafiaGame:
             self.log_file.write(message + "\n")
             self.log_file.flush()
 
-    def reset(self) -> GameStatus:
+    def reset(self, agents: Optional[List[BaseAgent]] = None) -> GameStatus:
+        """
+        Args:
+            agents: \uc678\ubd80\uc5d0\uc11c \uc8fc\uc785\ubc1b\uc744 \uc5d0\uc774\uc804\ud2b8 \ub9ac\uc2a4\ud2b8
+                    None\uc774\uba74 \uae30\ubcf8 LLMAgent 8\uba85\uc73c\ub85c \ucd08\uae30\ud654
+        """
         self.day = 1
         self.phase = Phase.DAY_DISCUSSION
         self.history = []
-        self.players = [LLMAgent(player_id=i) for i in range(config.game.PLAYER_COUNT)]
+        
+        # \uc5d0\uc774\uc804\ud2b8 \ucd08\uae30\ud654: \uc678\ubd80 \uc8fc\uc785 \ub610\ub294 \uae30\ubcf8 LLMAgent \uc0dd\uc131
+        if agents is not None:
+            self.players = agents
+        elif not self.players:  # \uc0dd\uc131\uc790\uc5d0\uc11c\ub3c4 \ubc1b\uc9c0 \uc54a\uc558\uc73c\uba74 \uae30\ubcf8 \uc0dd\uc131
+            self.players = [LLMAgent(player_id=i) for i in range(config.game.PLAYER_COUNT)]
 
         roles = config.game.DEFAULT_ROLES.copy()
         random.shuffle(roles)
         for p, r in zip(self.players, roles):
             p.role = r
-            self._log(f"플레이어 {p.id}: {p.role.name}")
+            self._log(f"\ud50c\ub808\uc774\uc5b4 {p.id}: {p.role.name}")
 
         return self.get_game_status()
 
@@ -110,11 +126,10 @@ class MafiaGame:
         if ended:
             break
 
-        # Phase End: Update Beliefs
+        # Phase End: observe만 호출 (내부에서 update_belief 수행)
         for p in self.players:
             if p.alive:
                 p.observe(self.get_game_status(p.id))
-                p.update_belief(self.history)
 
     def _process_vote(self):
         votes = [0] * len(self.players)
@@ -154,11 +169,10 @@ class MafiaGame:
                     )
         
 
-        # Phase End: Update Beliefs
+        # Phase End: observe만 호출
         for p in self.players:
             if p.alive:
                 p.observe(self.get_game_status(p.id))
-                p.update_belief(self.history)
 
     def _process_execute(self):
         max_v = max(self._last_votes)
@@ -207,11 +221,10 @@ class MafiaGame:
                     )
                 )
 
-        # Phase End: Update Beliefs
+        # Phase End: observe만 호출
         for p in self.players:
             if p.alive:
                 p.observe(self.get_game_status(p.id))
-                p.update_belief(self.history)
 
     def _process_night(self):
         m_target, d_target, p_target = None, None, None
@@ -270,11 +283,10 @@ class MafiaGame:
             self.players[m_target].alive = False
             self._log(f"살해 발생: {m_target}")
 
-        # Phase End: Update Beliefs
+        # Phase End: observe만 호출
         for p in self.players:
             if p.alive:
                 p.observe(self.get_game_status(p.id))
-                p.update_belief(self.history)
 
     def get_game_status(self, viewer_id: Optional[int] = None) -> GameStatus:
         if viewer_id is None:

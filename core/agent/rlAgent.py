@@ -98,74 +98,80 @@ class RLAgent(BaseAgent):
     
     def _action_index_to_dict(self, action_idx: int) -> Dict[str, Any]:
         """
-        액션 인덱스(0~20)를 게임 엔진 규격 딕셔너리로 변환
+        액션 인덱스(0~20)를 MafiaGame 규격 딕셔너리로 변환
         
-        액션 공간 (env.py 기준):
+        MafiaGame 기대 키: target_id, role, discussion_status, reason
+        
+        액션 공간:
         - 0~7: 단순 지목
-        - 8: 기권
-        - 9: 시민 주장
-        - 10: 경찰 주장
-        - 11: 의사 주장
-        - 12: 마피아 주장
-        - 13~20: 경찰 주장 + 지목 복합 (13→0, 14→1, ..., 20→7)
+        - 8: 기권 (discussion_status="End")
+        - 9~12: 역할 주장 (role)
+        - 13~20: 경찰 주장 + 지목 복합
         """
         if 0 <= action_idx <= 7:
             # 단순 지목
             return {
-                "target": int(action_idx),
-                "claim_role": -1,
-                "action_type": "target"
+                "target_id": int(action_idx),
+                "role": None,
+                "discussion_status": "Continue",
+                "reason": ""
             }
         elif action_idx == 8:
-            # 기권
+            # 기권 (토론 종료)
             return {
-                "target": -1,
-                "claim_role": -1,
-                "action_type": "abstain"
+                "target_id": -1,
+                "role": None,
+                "discussion_status": "End",
+                "reason": ""
             }
         elif action_idx == 9:
             # 시민 주장
             return {
-                "target": -1,
-                "claim_role": Role.CITIZEN,
-                "action_type": "claim"
+                "target_id": -1,
+                "role": Role.CITIZEN,
+                "discussion_status": "Continue",
+                "reason": "RL agent claim"
             }
         elif action_idx == 10:
             # 경찰 주장
             return {
-                "target": -1,
-                "claim_role": Role.POLICE,
-                "action_type": "claim"
+                "target_id": -1,
+                "role": Role.POLICE,
+                "discussion_status": "Continue",
+                "reason": "RL agent claim"
             }
         elif action_idx == 11:
             # 의사 주장
             return {
-                "target": -1,
-                "claim_role": Role.DOCTOR,
-                "action_type": "claim"
+                "target_id": -1,
+                "role": Role.DOCTOR,
+                "discussion_status": "Continue",
+                "reason": "RL agent claim"
             }
         elif action_idx == 12:
-            # 마피아 주장
+            # 마피아 주장 (블러핑)
             return {
-                "target": -1,
-                "claim_role": Role.MAFIA,
-                "action_type": "claim"
+                "target_id": -1,
+                "role": Role.MAFIA,
+                "discussion_status": "Continue",
+                "reason": "RL agent bluff"
             }
         elif 13 <= action_idx <= 20:
             # 경찰 주장 + 지목 복합
             target_id = action_idx - 13
             return {
-                "target": int(target_id),
-                "claim_role": Role.POLICE,
-                "action_type": "claim_and_target"
+                "target_id": int(target_id),
+                "role": Role.POLICE,
+                "discussion_status": "Continue",
+                "reason": "RL agent police claim with target"
             }
         else:
             # 범위 외 액션
             return {
-                "target": -1,
-                "claim_role": -1,
-                "action_type": "invalid",
-                "error": f"Invalid action index: {action_idx}"
+                "error": f"Invalid action index: {action_idx}",
+                "target_id": -1,
+                "role": None,
+                "discussion_status": "Continue"
             }
     
     def select_action(self, state, action_mask: Optional[np.ndarray] = None):
