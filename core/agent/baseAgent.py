@@ -1,9 +1,12 @@
 from abc import *
-from typing import List, Dict, Any
+from typing import List, Dict, Any, TYPE_CHECKING
 import numpy as np
 import random
 from config import config, Role
 from state import GameStatus, GameEvent
+
+if TYPE_CHECKING:
+    from core.action import EngineAction
 
 
 # Softmax 유틸리티 함수
@@ -50,6 +53,6 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def get_action(self) -> Dict[str, Any]:
-        """주관적 추론(Hunch) 및 결정 - 구조화된 딕셔너리 반환"""
+    def get_action(self) -> 'EngineAction':
+        """주관적 추론(Hunch) 및 결정 - EngineAction 튜플 반환"""
         pass

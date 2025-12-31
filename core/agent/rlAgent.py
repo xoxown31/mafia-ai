@@ -12,6 +12,7 @@ from ai.ppo import PPO
 from ai.reinforce import REINFORCE
 from config import config, Role
 from state import GameStatus, GameEvent
+from core.action import RLActionMapper, EngineAction
 
 
 class RLAgent(BaseAgent):
@@ -86,93 +87,21 @@ class RLAgent(BaseAgent):
         """BaseAgent의 추상 메서드 구현"""
         pass
     
-    def get_action(self) -> Dict[str, Any]:
-        """BaseAgent의 추상 메서드 구현 - last_action을 엔진 규격 딕셔너리로 변환"""
+    def get_action(self) -> EngineAction:
+        """
+        BaseAgent의 추상 메서드 구현 - EngineAction 튜플 반환
+        
+        RLAgent의 Translator 레이어:
+        - 내부적으로 last_action(인덱스)를 RLActionMapper를 통해 EngineAction으로 변환
+        - 엔진에는 정제된 튜플만 전달
+        """
         if self.last_action is None:
-            return {"error": "No action selected yet"}
+            # 기본값: 기권
+            from core.action import ActionType
+            return (ActionType.NO_ACTION, -1, None)
         
-        # 액션 인덱스를 게임 엔진 규격 딕셔너리로 매핑
-        # TODO: 실제 액션 공간 정의에 따라 매핑 로직 구현
-        # 예시: 인덱스 9 → {"discussion_status": "Continue", "role": 0, "target_id": -1}
-        return self._action_index_to_dict(self.last_action)
-    
-    def _action_index_to_dict(self, action_idx: int) -> Dict[str, Any]:
-        """
-        액션 인덱스(0~20)를 MafiaGame 규격 딕셔너리로 변환
-        
-        MafiaGame 기대 키: target_id, role, discussion_status, reason
-        
-        액션 공간:
-        - 0~7: 단순 지목
-        - 8: 기권 (discussion_status="End")
-        - 9~12: 역할 주장 (role)
-        - 13~20: 경찰 주장 + 지목 복합
-        """
-        if 0 <= action_idx <= 7:
-            # 단순 지목
-            return {
-                "target_id": int(action_idx),
-                "role": None,
-                "discussion_status": "Continue",
-                "reason": ""
-            }
-        elif action_idx == 8:
-            # 기권 (토론 종료)
-            return {
-                "target_id": -1,
-                "role": None,
-                "discussion_status": "End",
-                "reason": ""
-            }
-        elif action_idx == 9:
-            # 시민 주장
-            return {
-                "target_id": -1,
-                "role": Role.CITIZEN,
-                "discussion_status": "Continue",
-                "reason": "RL agent claim"
-            }
-        elif action_idx == 10:
-            # 경찰 주장
-            return {
-                "target_id": -1,
-                "role": Role.POLICE,
-                "discussion_status": "Continue",
-                "reason": "RL agent claim"
-            }
-        elif action_idx == 11:
-            # 의사 주장
-            return {
-                "target_id": -1,
-                "role": Role.DOCTOR,
-                "discussion_status": "Continue",
-                "reason": "RL agent claim"
-            }
-        elif action_idx == 12:
-            # 마피아 주장 (블러핑)
-            return {
-                "target_id": -1,
-                "role": Role.MAFIA,
-                "discussion_status": "Continue",
-                "reason": "RL agent bluff"
-            }
-        elif 13 <= action_idx <= 20:
-            # 경찰 주장 + 지목 복합
-            target_id = action_idx - 13
-            return {
-                "target_id": int(target_id),
-                "role": Role.POLICE,
-                "discussion_status": "Continue",
-                "reason": "RL agent police claim with target"
-            }
-        else:
-            # 범위 외 액션
-            return {
-                "error": f"Invalid action index: {action_idx}",
-                "target_id": -1,
-                "role": None,
-                "discussion_status": "Continue"
-            }
+        # RLActionMapper를 통한 변환 (모든 '해석'은 여기서 끝)
+        return RLActionMapper.action_index_to_engine(self.last_action)
     
     def select_action(self, state, action_mask: Optional[np.ndarray] = None):
         """

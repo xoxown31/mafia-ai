@@ -5,6 +5,7 @@ from config import config, Role, Phase, EventType
 from state import GameStatus, GameEvent, PlayerStatus
 from core.agent.llmAgent import LLMAgent
 from core.agent.baseAgent import BaseAgent
+from core.action import ActionType, EngineAction, ActionTranslator
 
 
 class MafiaGame:
@@ -19,14 +20,13 @@ class MafiaGame:
         self.day = 1
         self.phase = Phase.DAY_DISCUSSION
         self.history: List[GameEvent] = []
-        self.log_file = log_file  # 레거시 지원
+        self.log_file = log_file
         self.logger = logger
 
     def reset(self, agents: Optional[List[BaseAgent]] = None) -> GameStatus:
         """
         Args:
-            agents: \uc678\ubd80\uc5d0\uc11c \uc8fc\uc785\ubc1b\uc744 \uc5d0\uc774\uc804\ud2b8 \ub9ac\uc2a4\ud2b8
-                    None\uc774\uba74 \uae30\ubcf8 LLMAgent 8\uba85\uc73c\ub85c \ucd08\uae30\ud654
+            agents: 외부에서 주입받을 에이전트 리스트 (선택적)
         """
         self.day = 1
         self.phase = Phase.DAY_DISCUSSION
@@ -87,6 +87,7 @@ class MafiaGame:
         return self.get_game_status(), is_over, is_win
 
     def _process_discussion(self):
+        """토론 단계 처리 - Engine API: EngineAction 튜플만 받음"""
         for _ in range(2):
             ended = False
             for p in self.players:
@@ -95,35 +96,38 @@ class MafiaGame:
                 
                 try:
                     p.observe(self.get_game_status(p.id))
-                    action_dict = p.get_action()  # Dict[str, Any] 반환
-                    print(action_dict, end="\n")
                     
-                    if "error" in action_dict:
-                        continue
+                    # 에이전트로부터 액션 받기 (내부적으로 변환됨)
+                    action_data = p.get_action()
                     
-                    if action_dict.get("discussion_status") == "End":
+                    # Engine 포맷으로 변환 (reason 필드 완전 제외)
+                    engine_action: EngineAction = ActionTranslator.to_engine_action(action_data)
+                    action_type, target_id, role_value = engine_action
+                    
+                    print(f"[Engine] Player {p.id} action: {engine_action}")
+                    
+                    # 기권 처리
+                    if action_type == ActionType.NO_ACTION:
                         ended = True
                         break
-
-                    role_id = action_dict.get("role")
-                    target_id = action_dict.get("target_id")
-                    reason = action_dict.get("reason", "")
-
-                    # 이벤트 객체 생성
-                    event = GameEvent(
-                        day=self.day,
-                        phase=self.phase,
-                        event_type=EventType.CLAIM,
-                        actor_id=p.id,
-                        target_id=target_id,
-                        value=Role(role_id) if role_id is not None else None,
-                    )
                     
-                    # 이벤트를 history와 logger에 기록
-                    self.history.append(event)
-                    if self.logger:
-                        self.logger.log_event(event)
+                    # 역할 주장 이벤트만 기록
+                    if action_type in (ActionType.CLAIM_ROLE, ActionType.CLAIM_WITH_TARGET):
+                        event = GameEvent(
+                            day=self.day,
+                            phase=self.phase,
+                            event_type=EventType.CLAIM,
+                            actor_id=p.id,
+                            target_id=target_id if action_type == ActionType.CLAIM_WITH_TARGET else None,
+                            value=role_value,
+                        )
+                        
+                        self.history.append(event)
+                        if self.logger:
+                            self.logger.log_event(event)
+                
                 except Exception as e:
+                    print(f"[Engine] Error processing action for Player {p.id}: {e}")
                     continue
             
             if ended:
@@ -135,33 +139,35 @@ class MafiaGame:
                 p.observe(self.get_game_status(p.id))
 
     def _process_vote(self):
+        """투표 단계 처리 - Engine API: EngineAction 튜플만 받음"""
         votes = [0] * len(self.players)
         for p in self.players:
             if not p.alive:
                 continue
             p.observe(self.get_game_status(p.id))
             
-            action_dict = p.get_action()  # Dict[str, Any] 반환
+            # 에이전트로부터 액션 받기
+            action_data = p.get_action()
             
-            if "error" in action_dict:
-                continue
+            # Engine 포맷으로 변환
+            engine_action: EngineAction = ActionTranslator.to_engine_action(action_data)
+            action_type, target_id, role_value = engine_action
             
-            target = action_dict.get("target_id")
-            reason = action_dict.get("reason", "")
+            # 자기 자신 투표 방지
+            if target_id == p.id:
+                target_id = -1
 
-            if target == p.id:
-                target = -1
-
-            if target is not None and target != -1:
-                votes[target] += 1
+            # 유효한 타겟에게만 투표
+            if target_id != -1 and 0 <= target_id < len(self.players):
+                votes[target_id] += 1
                 
-                # 이벤트 생성 및 로깅
+                # 투표 이벤트 생성 및 로깅
                 event = GameEvent(
                     day=self.day,
                     phase=self.phase,
                     event_type=EventType.VOTE,
                     actor_id=p.id,
-                    target_id=target,
+                    target_id=target_id,
                     value=None,
                 )
                 self.history.append(event)
@@ -177,6 +183,7 @@ class MafiaGame:
                 p.observe(self.get_game_status(p.id))
 
     def _process_execute(self):
+        """처형 단계 처리 - Engine API: EngineAction 튜플만 받음"""
         if not self._last_votes:
             return
         
@@ -193,13 +200,14 @@ class MafiaGame:
                         continue
                     p.observe(self.get_game_status(p.id))
                     
-                    action_dict = p.get_action()  # Dict[str, Any] 반환
+                    # 에이전트로부터 액션 받기
+                    action_data = p.get_action()
                     
-                    if "error" in action_dict:
-                        continue
-                    
-                    agree = action_dict.get("agree_execution", 0)
-                    final_score += agree
+                    # 처형 동의 여부 추출 (임시: dict에서 agree_execution 키)
+                    # TODO: 향후 EngineAction에 별도 타입 추가 고려
+                    if isinstance(action_data, dict):
+                        agree = action_data.get("agree_execution", 0)
+                        final_score += agree
                 
                 success = final_score > 0
                 if success:
@@ -239,7 +247,8 @@ class MafiaGame:
 
     def _process_night(self):
         """
-        밤 단계 처리 - 역할별 로직을 매핑으로 분리하여 선언적 구조 유지
+        밤 단계 처리 - Engine API: EngineAction 튜플만 받음
+        역할별 로직을 매핑으로 분리하여 선언적 구조 유지
         """
         # 1. 역할별 행동 설정 매핑
         role_config = {
@@ -256,13 +265,16 @@ class MafiaGame:
                 continue
             
             p.observe(self.get_game_status(p.id))
-            action_dict = p.get_action()  # Dict[str, Any] 반환
             
-            if "error" in action_dict:
-                continue
+            # 에이전트로부터 액션 받기
+            action_data = p.get_action()
             
-            target_id = action_dict.get("target_id")
-            if target_id is not None and self.players[target_id].alive:
+            # Engine 포맷으로 변환
+            engine_action: EngineAction = ActionTranslator.to_engine_action(action_data)
+            action_type, target_id, role_value = engine_action
+            
+            # 유효한 타겟인지 확인
+            if target_id != -1 and 0 <= target_id < len(self.players) and self.players[target_id].alive:
                 # 3. 역할별 설정 가져오기
                 config = role_config.get(p.role)
                 if not config:

@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from core.agent.baseAgent import BaseAgent
 from config import config, Role, Phase, EventType
 from state import GameStatus, GameEvent
+from core.action import ActionTranslator, EngineAction
 
 if TYPE_CHECKING:
     from core.logger import LogManager
@@ -75,10 +76,18 @@ class LLMAgent(BaseAgent):
                     f"[Player {self.id}] Belief update failed: {e}\nResponse from LLM: {response_json}"
                 )
 
-    def get_action(self) -> Dict[str, Any]:
-        """구조화된 딕셔너리 형태로 액션 반환"""
+    def get_action(self) -> EngineAction:
+        """
+        LLM의 JSON 응답을 EngineAction 튜플로 변환하여 반환
+        
+        LLMAgent의 Translator 레이어:
+        - LLM에서 JSON 응답을 받음
+        - ActionTranslator를 통해 EngineAction으로 변환
+        - 엔진에는 정제된 튜플만 전달
+        """
         if not self.current_status:
-            return {"error": "No game status observed"}
+            from core.action import ActionType
+            return (ActionType.NO_ACTION, -1, None)
 
         phase_name = self.current_status.phase.name
         role_name = self.role.name
@@ -89,7 +98,11 @@ class LLMAgent(BaseAgent):
         else:
             prompt_key = phase_name
 
-        return self._execute_ai_logic(prompt_key)
+        # LLM 실행 및 JSON 응답 파싱
+        action_dict = self._execute_ai_logic(prompt_key)
+        
+        # ActionTranslator를 통해 EngineAction으로 변환
+        return ActionTranslator.to_engine_action(action_dict)
 
     def _execute_ai_logic(self, prompt_key: str) -> Dict[str, Any]:
         """LLM 실행 및 응답을 딕셔너리로 파싱하여 반환"""
