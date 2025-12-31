@@ -3,7 +3,9 @@ from utils.visualize import plot_results
 
 def train(env, agent, args, log_file):
     """학습 모드 실행"""
-    print(f"Start Training ({args.agent.upper()}) for {args.episodes} episodes...")
+    algorithm_name = getattr(agent, 'algorithm', args.agent).upper()
+    backbone_name = getattr(agent, 'backbone', 'mlp').upper()
+    print(f"Start Training ({algorithm_name}+{backbone_name}) for {args.episodes} episodes...")
 
     history_rewards = []
     history_win_rates = []
@@ -11,6 +13,11 @@ def train(env, agent, args, log_file):
 
     for episode in range(1, args.episodes + 1):
         log_file.write(f"\n{'='*20} Episode {episode} Start {'='*20}\n")
+        
+        # RNN 은닉 상태 초기화
+        if hasattr(agent, 'reset_hidden'):
+            agent.reset_hidden()
+        
         obs, _ = env.reset()
         done = False
         total_reward = 0
@@ -20,14 +27,10 @@ def train(env, agent, args, log_file):
             action = agent.select_action(obs)
             next_obs, reward, done, truncated, _ = env.step(action)
 
-            # 에이전트별 데이터 저장
-            if args.agent == "ppo":
-                agent.buffer.rewards.append(reward)
-                agent.buffer.is_terminals.append(done)
-            elif args.agent == "reinforce":
-                agent.rewards.append(reward)
+            # RLAgent의 인터페이스 사용
+            agent.store_reward(reward, done)
 
-            # 승리 판정 (보상이 5.0 초과면 승리라고 가정)
+            # 승리 판정
             if done and reward > 5.0:
                 is_win = True
 

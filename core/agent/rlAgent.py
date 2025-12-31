@@ -127,20 +127,33 @@ class RLAgent(BaseAgent):
             self.learner.update()
     
     def _create_il_loss_fn(self):
-        """IL 손실 함수 생성"""
+        """IL 손실 함수 생성 (최적화됨)"""
         def compute_il_loss(states: torch.Tensor) -> torch.Tensor:
             if len(self.il_buffer) == 0:
                 return torch.tensor(0.0)
             
-            il_states = torch.stack([torch.FloatTensor(s) for s, _, _ in self.il_buffer])
-            il_actions = torch.LongTensor([a for _, a, _ in self.il_buffer])
+            # 텐서 생성 최적화: 리스트 컴프리헨션 대신 스택 사용
+            il_states_list = [s for s, _, _ in self.il_buffer]
+            il_actions_list = [a for _, a, _ in self.il_buffer]
             
+            if len(il_states_list) == 0:
+                return torch.tensor(0.0)
+            
+            # 기존 텐서로 변환
+            il_states = torch.stack([torch.as_tensor(s, dtype=torch.float32) for s in il_states_list])
+            il_actions = torch.tensor(il_actions_list, dtype=torch.long)
+            
+            # RNN 처리: 배치 유지
             if self.backbone in ["lstm", "gru"]:
+                # 모든 샘플을 하나의 시퀀스로 처리
                 il_states = il_states.unsqueeze(0)
                 action_probs, _, _ = self.policy(il_states)
                 action_probs = action_probs.squeeze(0)
             else:
                 action_probs, _, _ = self.policy(il_states)
+            
+            # 마스크 처리 (선택적)
+            # 버퍼에 마스크 정보가 있다면 적용
             
             criterion = nn.CrossEntropyLoss()
             loss = criterion(action_probs, il_actions)

@@ -92,10 +92,21 @@ class PPO:
         
         for _ in range(self.k_epochs):
             if self.is_rnn:
-                old_states_3d = old_states.unsqueeze(0)
-                action_probs, state_values, _ = self.policy(old_states_3d)
-                action_probs = action_probs.squeeze(0)
-                state_values = state_values.squeeze(0)
+                # RNN: 에피소드 경계를 고려한 시퀀스 처리
+                episodes = self._split_episodes(old_states, self.buffer.is_terminals)
+                all_action_probs = []
+                all_state_values = []
+                
+                for ep_states in episodes:
+                    if len(ep_states) == 0:
+                        continue
+                    ep_states_3d = ep_states.unsqueeze(0)
+                    action_probs, state_values, _ = self.policy(ep_states_3d)
+                    all_action_probs.append(action_probs.squeeze(0))
+                    all_state_values.append(state_values.squeeze(0))
+                
+                action_probs = torch.cat(all_action_probs, dim=0)
+                state_values = torch.cat(all_state_values, dim=0)
             else:
                 action_probs, state_values, _ = self.policy(old_states)
             
@@ -127,3 +138,20 @@ class PPO:
             
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.buffer.clear()
+    
+    def _split_episodes(self, states, is_terminals):
+        """에피소드 경계에 따라 상태를 분리"""
+        episodes = []
+        current_episode = []
+        
+        for i, state in enumerate(states):
+            current_episode.append(state)
+            if is_terminals[i]:
+                if current_episode:
+                    episodes.append(torch.stack(current_episode))
+                current_episode = []
+        
+        if current_episode:
+            episodes.append(torch.stack(current_episode))
+        
+        return episodes

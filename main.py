@@ -5,9 +5,9 @@ import threading
 import tkinter as tk
 
 from core.env import MafiaEnv
-from core.game import MafiaGame  # LLM 에이전트용 MafiaGame 직접 임포트
-from ai.ppo import PPO
-from ai.reinforce import REINFORCEAgent
+from core.game import MafiaGame
+from core.agent.rlAgent import RLAgent
+from config import Role
 from PyQt6.QtWidgets import QApplication
 from core.runner import train, test
 from utils.analysis import analyze_log_file
@@ -55,11 +55,18 @@ def run_simulation(args):
             state_dim = env.observation_space["observation"].shape[0]
             action_dim = env.action_space.n
 
-            # 에이전트 추가시 수정 부분
-            if args.agent == "ppo":
-                agent = PPO(state_dim, action_dim)
-            elif args.agent == "reinforce":
-                agent = REINFORCEAgent(state_dim, action_dim)
+            # RLAgent 인스턴스 생성
+            agent = RLAgent(
+                player_id=0,
+                role=Role.CITIZEN,
+                state_dim=state_dim,
+                action_dim=action_dim,
+                algorithm=args.agent,
+                backbone=getattr(args, 'backbone', 'mlp'),
+                use_il=getattr(args, 'use_il', False),
+                hidden_dim=getattr(args, 'hidden_dim', 128),
+                num_layers=getattr(args, 'num_layers', 2)
+            )
 
             # 모드별 실행
             if args.mode == "train":
@@ -105,7 +112,26 @@ def main():
             "--agent", type=str, default="ppo", choices=["ppo", "reinforce", "llm"]
         )
         parser.add_argument("--episodes", type=int, default=1000)
-        parser.add_argument("--gui", action="store_true")  # Legacy
+        parser.add_argument("--gui", action="store_true")
+        
+        # RLAgent 설정
+        parser.add_argument(
+            "--backbone", type=str, default="mlp", choices=["mlp", "lstm", "gru"],
+            help="Neural network backbone"
+        )
+        parser.add_argument(
+            "--use_il", action="store_true",
+            help="Enable Imitation Learning"
+        )
+        parser.add_argument(
+            "--hidden_dim", type=int, default=128,
+            help="Hidden dimension for neural network"
+        )
+        parser.add_argument(
+            "--num_layers", type=int, default=2,
+            help="Number of layers for RNN"
+        )
+        
         args = parser.parse_args()
 
         if args.gui and GUI_AVAILABLE:
