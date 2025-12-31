@@ -120,7 +120,7 @@ class LogManager:
 
     def interpret_event(self, event: GameEvent) -> str:
         """
-        GameEvent를 자연어 문장으로 변환
+        GameEvent를 자연어 문장으로 변환 (데이터 주도 방식)
         
         이 메서드는 GUI 리플레이와 LLM 에이전트의 프롬프트 생성에 사용됩니다.
         로그 파일에는 저장되지 않습니다.
@@ -131,55 +131,42 @@ class LogManager:
         Returns:
             자연어 문장
         """
-        event_type = event.event_type
-        day = event.day
-        actor_id = event.actor_id
-        target_id = event.target_id
-        value = event.value
-
-        # 역할 이름 변환
-        role_name = ""
-        if isinstance(value, Role):
-            role_name = self._get_role_korean_name(value)
-
-        # 이벤트 타입별 템플릿 선택 및 포맷팅
-        if event_type == EventType.CLAIM:
-            if value is None:
-                # 침묵
-                template = self.narrative_templates.get("SILENCE", "")
-                return template.format(day=day, actor_id=actor_id)
-            elif target_id is None or target_id == actor_id:
-                # 자기 주장
-                template = self.narrative_templates.get("CLAIM_SELF", "")
-                return template.format(day=day, actor_id=actor_id, role_name=role_name)
+        # 1. 이벤트 타입과 템플릿 키 매핑
+        type_to_key = {
+            EventType.VOTE: "VOTE",
+            EventType.EXECUTE: "EXECUTE",
+            EventType.KILL: "KILL",
+            EventType.PROTECT: "PROTECT",
+            EventType.POLICE_RESULT: "POLICE_RESULT",
+        }
+        
+        # 2. 특수 로직이 필요한 CLAIM 처리
+        template_key = type_to_key.get(event.event_type)
+        
+        if event.event_type == EventType.CLAIM:
+            if event.value is None:
+                template_key = "SILENCE"
+            elif event.target_id is None or event.target_id == event.actor_id:
+                template_key = "CLAIM_SELF"
             else:
-                # 타인 지목
-                template = self.narrative_templates.get("CLAIM_OTHER", "")
-                return template.format(
-                    day=day, actor_id=actor_id, target_id=target_id, role_name=role_name
-                )
-
-        elif event_type == EventType.VOTE:
-            template = self.narrative_templates.get("VOTE", "")
-            return template.format(day=day, actor_id=actor_id, target_id=target_id)
-
-        elif event_type == EventType.EXECUTE:
-            template = self.narrative_templates.get("EXECUTE", "")
-            return template.format(day=day, target_id=target_id, role_name=role_name)
-
-        elif event_type == EventType.KILL:
-            template = self.narrative_templates.get("KILL", "")
-            return template.format(day=day, target_id=target_id)
-
-        elif event_type == EventType.PROTECT:
-            template = self.narrative_templates.get("PROTECT", "")
-            return template.format(day=day, target_id=target_id)
-
-        elif event_type == EventType.POLICE_RESULT:
-            template = self.narrative_templates.get("POLICE_RESULT", "")
-            return template.format(day=day, target_id=target_id, role_name=role_name)
-
-        return f"[Unknown Event] {event.model_dump_json()}"
+                template_key = "CLAIM_OTHER"
+        
+        if not template_key:
+            return f"[Unknown Event] {event.event_type}"
+        
+        # 3. 템플릿 가져오기 및 포맷팅
+        template = self.narrative_templates.get(template_key, "")
+        if not template:
+            return f"[No Template] {template_key}"
+        
+        role_name = self._get_role_korean_name(event.value) if isinstance(event.value, Role) else ""
+        
+        return template.format(
+            day=event.day,
+            actor_id=event.actor_id,
+            target_id=event.target_id if event.target_id is not None else -1,
+            role_name=role_name
+        )
 
     @staticmethod
     def _get_role_korean_name(role: Role) -> str:

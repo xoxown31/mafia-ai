@@ -7,9 +7,10 @@ from config import *
 
 
 class MafiaEnv(gym.Env):
-    def __init__(self, log_file=None):
+    def __init__(self, log_file=None, logger=None):
         super(MafiaEnv, self).__init__()
-        self.game = MafiaGame(log_file=log_file)
+        self.game = MafiaGame(log_file=log_file, logger=logger)
+        self.logger = logger
         
         # === [Action Space 확장 v2.0] ===
         # 기존: 0~7번 플레이어 지목 + 8번 기권 (총 9개)
@@ -78,6 +79,12 @@ class MafiaEnv(gym.Env):
 
         # RLAgent에 액션 전달 (last_action 속성에 저장)
         self.game.players[my_id].last_action = action
+        
+        # TODO: 구조적 개선 필요
+        # 현재 process_turn()은 전체 페이즈(discussion, vote, execute, night)를 한 번에 처리합니다.
+        # 이로 인해 토론 단계에서 여러 발언 기회가 있어도 같은 액션만 반복하게 됩니다.
+        # 해결 방안: 페이즈를 더 세분화하여 각 발언마다 새로운 step()을 호출하도록 구조 변경 필요
+        # 예: step_discussion_turn(), step_vote(), step_execute(), step_night()
         
         # 게임 진행 (엔진이 에이전트에게 직접 의사를 물음)
         status, done, win = self.game.process_turn()

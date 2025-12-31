@@ -158,48 +158,17 @@ class LLMAgent(BaseAgent):
         if self.current_status.phase != Phase.DAY_DISCUSSION:
             return "토론 단계가 아님"
 
-        log_lines = []
+        if not self.logger:
+            return "LogManager가 설정되지 않아 기록을 표시할 수 없습니다."
+        
+        # LogManager를 통한 통합 해석 (중복 제거)
+        log_lines = [
+            self.logger.interpret_event(e) 
+            for e in self.current_status.action_history 
+            if e.event_type == EventType.CLAIM
+        ]
 
-        for event in self.current_status.action_history:
-            if event.event_type != EventType.CLAIM:
-                continue
-            
-            # LogManager를 통한 통합 해석
-            if self.logger:
-                narrative = self.logger.interpret_event(event)
-                log_lines.append(narrative)
-            else:
-                # Fallback: LogManager가 없을 경우 기본 포맷
-                actor_id = event.actor_id
-                target_id = event.target_id if event.target_id is not None else -1
-                claimed_role = event.value if isinstance(event.value, Role) else None
-                
-                if claimed_role is not None:
-                    role_name = self._get_role_korean_name(claimed_role)
-                    if target_id == actor_id or target_id == -1:
-                        action_string = f"Player {actor_id}는 자신이 {role_name}라고 주장"
-                    else:
-                        action_string = f"Player {actor_id}는 Player {target_id}가 {role_name}라고 주장"
-                else:
-                    action_string = f"Player {actor_id}가 침묵."
-                
-                log_lines.append(f"{event.day}일 {event.phase.name} | {action_string}")
-
-        if not log_lines:
-            return "아직 아무도 주장하지 않았습니다."
-        else:
-            return "\n".join(log_lines)
-
-    @staticmethod
-    def _get_role_korean_name(role: Role) -> str:
-        """역할의 한국어 이름 반환"""
-        role_names = {
-            Role.CITIZEN: "시민",
-            Role.POLICE: "경찰",
-            Role.DOCTOR: "의사",
-            Role.MAFIA: "마피아",
-        }
-        return role_names.get(role, str(role))
+        return "\n".join(log_lines) if log_lines else "아직 아무도 주장하지 않았습니다."
 
     def _belief_to_markdown(self) -> str:
         """
