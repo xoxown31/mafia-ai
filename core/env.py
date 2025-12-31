@@ -59,46 +59,27 @@ class MafiaEnv(gym.Env):
         return self._encode_observation(status), {}
 
     def step(self, action):
-        my_id = self.game.players[0].id
+        """
+        환경 스텝 실행 - RLAgent에 액션을 주입하고 게임을 진행
+        
+        Args:
+            action: Discrete action index (0~20)
+        
+        Returns:
+            observation, reward, done, truncated, info
+        """
+        my_id = 0  # RL 에이전트는 항상 Player 0
         my_role = self.game.players[my_id].role
         
-        # 턴 진행 전 상태 저장 (의사 보상 계산용)
+        # 턴 진행 전 상태 저장
         prev_alive = [p.alive for p in self.game.players]
         prev_phase = self.game.phase
 
-        # === [확장된 액션 처리] ===
-        ai_claim_role = -1  # AI가 주장할 역할 (-1: 주장 없음)
-        processed_action = -1  # 실제 게임에 전달될 지목 액션
+        # RLAgent에 액션 전달 (last_action 속성에 저장)
+        self.game.players[my_id].last_action = action
         
-        if action == 8:
-            # 기권
-            processed_action = -1
-        elif 0 <= action <= 7:
-            # 단순 지목
-            processed_action = action
-        elif action == 9:
-            # 시민 주장
-            ai_claim_role = Role.CITIZEN
-            processed_action = -1
-        elif action == 10:
-            # 경찰 주장
-            ai_claim_role = Role.POLICE
-            processed_action = -1
-        elif action == 11:
-            # 의사 주장
-            ai_claim_role = Role.DOCTOR
-            processed_action = -1
-        elif action == 12:
-            # 마피아 주장 (블러핑 전략 학습 가능)
-            ai_claim_role = Role.MAFIA
-            processed_action = -1
-        elif 13 <= action <= 20:
-            # 경찰 주장 + 지목 복합 액션
-            ai_claim_role = Role.POLICE
-            processed_action = action - 13  # 13 → 0, 14 → 1, ..., 20 → 7
-
-        # 게임 진행 (역할 주장 정보도 전달)
-        status, done, win = self.game.process_turn(processed_action, ai_claim_role)
+        # 게임 진행 (엔진이 에이전트에게 직접 의사를 물음)
+        status, done, win = self.game.process_turn()
         
         # === 투표 기록 업데이트 (PHASE_DAY_VOTE 종료 후) ===
         if prev_phase == Phase.DAY_VOTE:
@@ -127,39 +108,41 @@ class MafiaEnv(gym.Env):
         else:
             reward += 0.5  # 매 턴 생존 시 소량 보상 (학습 신호)
 
-        # 3. 역할 기반 행동 보상 (명확한 보상만)
+        # 3. 역할 기반 행동 보상
         if self.game.players[my_id].alive:
-            phase = self.game.phase
+            # PlayerStatus 사용 (status.players는 List[PlayerStatus])
+            my_status = next(p for p in status.players if p.id == my_id)
             
-            # === [역할 주장 보상] ===
-            if ai_claim_role != -1:
-                # 자신의 실제 역할을 주장하면 보상
-                if ai_claim_role == my_role:
-                    reward += 2.0  # 정직한 주장 보상
-                    # 경찰/의사가 자신을 밝히면 추가 보상 (전략적 선택)
-                    if my_role in [Role.POLICE, Role.DOCTOR]:
-                        reward += 3.0
-                else:
-                    # 거짓 주장 (블러핑) - 마피아에게 유용할 수 있음
-                    if my_role == Role.MAFIA:
-                        reward += 1.0  # 마피아의 블러핑 허용
-                    else:
-                        reward -= 2.0  # 시민 팀의 거짓 주장은 페널티
-            
-            # === [행동 보상] ===
-            if processed_action != -1:
-                phase = self.game.phase
+            # 액션 Dict에서 정보 추출 (last_action이 Dict로 변환됨)
+            action_dict = self.game.players[my_id].last_action
+            if isinstance(action_dict, dict):
+                target = action_dict.get('target', -1)
+                claim_role = action_dict.get('claim_role', -1)
                 
-                if my_role == Role.CITIZEN:
-                    reward += self._calculate_citizen_reward(processed_action, phase)
-                elif my_role == Role.MAFIA:
-                    reward += self._calculate_mafia_reward(processed_action, phase)
-                elif my_role == Role.POLICE:
-                    reward += self._calculate_citizen_reward(processed_action, phase)
-                    reward += self._calculate_police_reward(processed_action, phase)
-                elif my_role == Role.DOCTOR:
-                    reward += self._calculate_citizen_reward(processed_action, phase)
-                    reward += self._calculate_doctor_reward(prev_alive, processed_action, phase)
+                # === [역할 주장 보상] ===
+                if claim_role != -1:
+                    if claim_role == my_role:
+                        reward += 2.0
+                        if my_role in [Role.POLICE, Role.DOCTOR]:
+                            reward += 3.0
+                    else:
+                        if my_role == Role.MAFIA:
+                            reward += 1.0
+                        else:
+                            reward -= 2.0
+                
+                # === [행동 보상] ===
+                if target != -1:
+                    if my_role == Role.CITIZEN:
+                        reward += self._calculate_citizen_reward(target, prev_phase)
+                    elif my_role == Role.MAFIA:
+                        reward += self._calculate_mafia_reward(target, prev_phase)
+                    elif my_role == Role.POLICE:
+                        reward += self._calculate_citizen_reward(target, prev_phase)
+                        reward += self._calculate_police_reward(target, prev_phase)
+                    elif my_role == Role.DOCTOR:
+                        reward += self._calculate_citizen_reward(target, prev_phase)
+                        reward += self._calculate_doctor_reward(prev_alive, target, prev_phase)
 
         return self._encode_observation(status), reward, done, False, {}
 
@@ -342,29 +325,34 @@ class MafiaEnv(gym.Env):
 
     def _encode_observation(self, status):
         """
-        공개 정보만을 사용한 관측 인코딩 (RationalCharacter의 belief 사용 금지)
+        GameStatus를 사용한 관측 인코딩
         
         구성:
         1. alive_status (8): 각 플레이어 생존 여부
-        2. my_role (4): 내 역할 one-hot (citizen, police, doctor, mafia)
-        3. claim_status (8): 각 플레이어가 주장한 역할 (0~3, 정규화)
-        4. accusation_matrix (64): 누가 누구를 의심했는지 (8x8 평탄화)
-        5. last_vote_matrix (64): 직전 투표 기록 (8x8 평탄화)
+        2. my_role (4): 내 역할 one-hot
+        3. claim_status (8): 각 플레이어가 주장한 역할
+        4. accusation_matrix (64): 누가 누구를 의심했는지
+        5. last_vote_matrix (64): 직전 투표 기록
         6. day_count (1): 현재 날짜 (정규화)
-        7. phase_onehot (3): 현재 페이즈 (discussion, vote, night)
+        7. phase_onehot (3): 현재 페이즈
         
         Total: 152차원
         """
-        # 1. 생존 상태 (8)
-        alive_vector = np.array(status["alive_status"], dtype=np.float32)
+        my_id = 0  # RL agent는 항상 Player 0
+        
+        # 1. 생존 상태 (8) - status.players 사용
+        alive_vector = np.array([p.alive for p in status.players], dtype=np.float32)
         
         # 2. 내 역할 one-hot (4)
-        my_role_id = status["roles"][status["id"]]
+        my_role_id = next(p.role for p in status.players if p.id == my_id)
         role_one_hot = np.zeros(4, dtype=np.float32)
         role_one_hot[my_role_id] = 1.0
         
-        # 3. Claim Status (8): 각 플레이어가 주장한 역할
+        # 3. Claim Status (8)
         claim_status = np.zeros(config.game.PLAYER_COUNT, dtype=np.float32)
+        for player in self.game.players:
+            if hasattr(player, 'claimed_role') and player.claimed_role != -1:
+                claim_status[player.id] = player.claimed_role / 3.0
         for player in self.game.players:
             # claimed_role 속성이 있으면 사용, 없으면 0 (주장 없음)
             if hasattr(player, 'claimed_role') and player.claimed_role != -1:
@@ -410,10 +398,12 @@ class MafiaEnv(gym.Env):
         return {"observation": observation, "action_mask": action_mask}
 
     def render(self):
+        """게임 상태 렌더링 - PlayerStatus 사용"""
         phase_str = (
             ["Claim", "Discussion", "Vote", "Night"][self.game.phase]
             if isinstance(self.game.phase, int)
             else self.game.phase
         )
-        alive_indices = [i for i, alive in enumerate(self.game.alive_status) if alive]
+        # status.players 사용
+        alive_indices = [p.id for p in self.game.get_status().players if p.alive]
         print(f"[Day {self.game.day_count}] {phase_str} | Alive: {alive_indices}")

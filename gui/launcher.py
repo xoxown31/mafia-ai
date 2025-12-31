@@ -11,9 +11,12 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QGroupBox,
     QMessageBox,
+    QLineEdit,
+    QFileDialog,
 )
 from PyQt6.QtCore import pyqtSignal, Qt
 from argparse import Namespace
+from pathlib import Path
 
 
 class Launcher(QWidget):
@@ -95,10 +98,74 @@ class Launcher(QWidget):
         ep_layout.addWidget(self.ep_spin)
         ep_group.setLayout(ep_layout)
         layout.addWidget(ep_group)
+        
+        # 4. RL 상세 설정
+        rl_group = QGroupBox("RL 상세 설정 (PPO/REINFORCE)")
+        rl_layout = QGridLayout()
+        
+        # 알고리즘 선택
+        rl_layout.addWidget(QLabel("알고리즘:"), 0, 0)
+        self.rl_algorithm = QComboBox()
+        self.rl_algorithm.addItems(["PPO", "REINFORCE"])
+        rl_layout.addWidget(self.rl_algorithm, 0, 1)
+        
+        # 백본 선택
+        rl_layout.addWidget(QLabel("백본:"), 1, 0)
+        self.rl_backbone = QComboBox()
+        self.rl_backbone.addItems(["MLP", "LSTM", "GRU"])
+        rl_layout.addWidget(self.rl_backbone, 1, 1)
+        
+        # 은닉층 차원
+        rl_layout.addWidget(QLabel("은닉층 차원:"), 2, 0)
+        self.rl_hidden_dim = QSpinBox()
+        self.rl_hidden_dim.setRange(32, 512)
+        self.rl_hidden_dim.setValue(128)
+        rl_layout.addWidget(self.rl_hidden_dim, 2, 1)
+        
+        # RNN 레이어 수
+        rl_layout.addWidget(QLabel("RNN 레이어:"), 3, 0)
+        self.rl_num_layers = QSpinBox()
+        self.rl_num_layers.setRange(1, 4)
+        self.rl_num_layers.setValue(2)
+        rl_layout.addWidget(self.rl_num_layers, 3, 1)
+        
+        rl_group.setLayout(rl_layout)
+        layout.addWidget(rl_group)
+        
+        # 5. 경로 관리
+        path_group = QGroupBox("경로 관리")
+        path_layout = QGridLayout()
+        
+        # 모델 저장 경로
+        path_layout.addWidget(QLabel("모델 저장:"), 0, 0)
+        self.model_path_input = QLineEdit()
+        self.model_path_input.setText("./models")
+        self.model_path_input.setReadOnly(True)
+        path_layout.addWidget(self.model_path_input, 0, 1)
+        
+        btn_model_path = QPushButton("📁")
+        btn_model_path.setFixedSize(30, 30)
+        btn_model_path.clicked.connect(self.select_model_path)
+        path_layout.addWidget(btn_model_path, 0, 2)
+        
+        # 로그 출력 경로
+        path_layout.addWidget(QLabel("로그 출력:"), 1, 0)
+        self.log_path_input = QLineEdit()
+        self.log_path_input.setText("./logs")
+        self.log_path_input.setReadOnly(True)
+        path_layout.addWidget(self.log_path_input, 1, 1)
+        
+        btn_log_path = QPushButton("📁")
+        btn_log_path.setFixedSize(30, 30)
+        btn_log_path.clicked.connect(self.select_log_path)
+        path_layout.addWidget(btn_log_path, 1, 2)
+        
+        path_group.setLayout(path_layout)
+        layout.addWidget(path_group)
 
         layout.addStretch()
 
-        # 4. 시작 버튼
+        # 시작 버튼
         self.btn_start = QPushButton("시뮬레이션 시작")
         self.btn_start.setStyleSheet(
             """
@@ -147,11 +214,23 @@ class Launcher(QWidget):
         """설정 버튼 클릭 시 패널 열기/닫기"""
         if self.btn_expand.isChecked():
             self.right_panel.setVisible(True)
-            self.resize(900, 500)
+            self.resize(900, 600)
         else:
             self.right_panel.setVisible(False)
-            self.resize(400, 450)
+            self.resize(400, 550)
             self.adjustSize()
+    
+    def select_model_path(self):
+        """모델 저장 경로 선택"""
+        path = QFileDialog.getExistingDirectory(self, "모델 저장 경로 선택", self.model_path_input.text())
+        if path:
+            self.model_path_input.setText(path)
+    
+    def select_log_path(self):
+        """로그 출력 경로 선택"""
+        path = QFileDialog.getExistingDirectory(self, "로그 출력 경로 선택", self.log_path_input.text())
+        if path:
+            self.log_path_input.setText(path)
 
     def sync_sub_agents(self, text):
         """
@@ -162,20 +241,37 @@ class Launcher(QWidget):
             combo.setCurrentText(text)
 
     def on_click_start(self):
+        """시뮬레이션 시작 버튼 클릭 - RL 설정 및 경로 포함"""
         # 메인 에이전트 설정
         main_agent = self.agent_combo.currentText()
 
-        # 오른쪽 8명 에이전트 설정값 수집 (리스트 형태)
+        # 오른쪽 8명 에이전트 설정값 수집
         others_agents = [combo.currentText() for combo in self.sub_agent_combos]
 
         mode = "train" if self.radio_train.isChecked() else "test"
 
+        # RL 상세 설정 수집
+        rl_config = {
+            "algorithm": self.rl_algorithm.currentText().lower(),
+            "backbone": self.rl_backbone.currentText().lower(),
+            "hidden_dim": self.rl_hidden_dim.value(),
+            "num_layers": self.rl_num_layers.value(),
+        }
+        
+        # 경로 설정
+        paths = {
+            "model_dir": Path(self.model_path_input.text()),
+            "log_dir": Path(self.log_path_input.text()),
+        }
+
         args = Namespace(
-            agent=main_agent,  # 플레이어(Main)
-            others=others_agents,  # 나머지 8명 리스트
+            agent=main_agent,
+            others=others_agents,
             mode=mode,
             episodes=self.ep_spin.value(),
             gui=True,
+            rl_config=rl_config,
+            paths=paths,
         )
 
         self.start_simulation_signal.emit(args)

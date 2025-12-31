@@ -33,7 +33,10 @@ class MafiaGame:
 
         return self.get_game_status()
 
-    def process_turn(self, action: int = -1) -> Tuple[GameStatus, bool, bool]:
+    def process_turn(self) -> Tuple[GameStatus, bool, bool]:
+        """
+        게임 턴 진행 - 외부에서 액션을 주입받지 않고 에이전트에게 직접 의사를 물음
+        """
         is_over, is_win = self.check_game_over()
         if is_over:
             return self.get_game_status(), is_over, is_win
@@ -65,47 +68,47 @@ class MafiaGame:
                 if not p.alive:
                     continue
                 p.observe(self.get_game_status(p.id))
-                resp = p.get_action()
-                print(resp, end="\n")
-                try:
-                    data = json.loads(resp)
-                    if data.get("discussion_status") == "End":
-                        ended = True
-                        break
-
-                    role_id = data.get("role")
-                    target_id = data.get("target_id")
-                    reason = data.get("reason", "")
-                    role = p.role.name if role_id is None else Role(role_id).name
-
-                    action_string = ""
-                    if role_id is not None:
-                        if target_id == p.id or target_id == -1:
-                            action_string = (
-                                f"Player {p.id}는 자신이 {role}이이라고 주장"
-                            )
-                        else:
-                            action_string = f"Player {p.actor_id}는 Player {target_id}가 {role}라고 주장"
-                    else:
-                        action_string = f"Player {p.id}가 침묵."
-                    argue = action_string + (f" 이유: {reason}")
-                    self._log(argue)
-                    self.history.append(
-                        GameEvent(
-                            day=self.day,
-                            phase=self.phase,
-                            event_type=EventType.CLAIM,
-                            actor_id=p.id,
-                            target_id=target_id,
-                            value=Role(role_id) if role_id is not None else None,
-                        )
-                    )
-                except Exception as e:
-                    self._log(f"플레이어 {p.id} 액션 처리 중 에러 발생: {e}")
-                    self._log(f"  - 받은 응답 (resp): {resp}")
+                action_dict = p.get_action()  # Dict[str, Any] 반환
+                print(action_dict, end="\n")
+                
+                if "error" in action_dict:
+                    self._log(f"플레이어 {p.id} 액션 오류: {action_dict['error']}")
                     continue
-            if ended:
-                break
+                
+                if action_dict.get("discussion_status") == "End":
+                    ended = True
+                    break
+
+                role_id = action_dict.get("role")
+                target_id = action_dict.get("target_id")
+                reason = action_dict.get("reason", "")
+                role = p.role.name if role_id is None else Role(role_id).name
+
+                action_string = ""
+                if role_id is not None:
+                    if target_id == p.id or target_id == -1:
+                        action_string = f"Player {p.id}는 자신이 {role}라고 주장"
+                    else:
+                        action_string = f"Player {p.id}는 Player {target_id}가 {role}라고 주장"
+                else:
+                    action_string = f"Player {p.id}가 침묵."
+                argue = action_string + (f" 이유: {reason}")
+                self._log(argue)
+                self.history.append(
+                    GameEvent(
+                        day=self.day,
+                        phase=self.phase,
+                        event_type=EventType.CLAIM,
+                        actor_id=p.id,
+                        target_id=target_id,
+                        value=Role(role_id) if role_id is not None else None,
+                    )
+                )
+            except Exception as e:
+                self._log(f"플레이어 {p.id} 액션 처리 중 에러 발생: {e}")
+                continue
+        if ended:
+            break
 
         # Phase End: Update Beliefs
         for p in self.players:
@@ -119,10 +122,15 @@ class MafiaGame:
             if not p.alive:
                 continue
             p.observe(self.get_game_status(p.id))
-            try:
-                data = json.loads(p.get_action())
-                target = data.get("target_id")
-                reason = data.get("reason", "")
+            
+            action_dict = p.get_action()  # Dict[str, Any] 반환
+            
+            if "error" in action_dict:
+                self._log(f"플레이어 {p.id} 투표 오류: {action_dict['error']}")
+                continue
+            
+            target = action_dict.get("target_id")
+            reason = action_dict.get("reason", "")
 
                 if target == p.id:
                     self._log(
@@ -144,15 +152,7 @@ class MafiaGame:
                             value=None,
                         )
                     )
-            except Exception as e:
-                self._log(f"플레이어 {p.id} 투표 처리 중 에러 발생: {e}")
-                # Calling p.get_action() again might change state or trigger new LLM call,
-                # so log the error and don't try to re-fetch resp
-                continue
-
-        max_v = max(votes)
-        self._log(f"투표 결과: {votes}, 최다 득표 수: {max_v}")
-        self._last_votes = votes
+        
 
         # Phase End: Update Beliefs
         for p in self.players:
@@ -171,18 +171,15 @@ class MafiaGame:
                     if not p.alive:
                         continue
                     p.observe(self.get_game_status(p.id))
-                    try:
-                        data = json.loads(p.get_action())
-                        final_score += data.get("agree_execution", 0)
-                        self._log(
-                            f"플레이어 {target_id} 처형 동의 여부: {data.get('agree_execution')}"
-                        )
-                    except Exception as e:
-                        self._log(f"플레이어 {p.id} 처형 동의 처리 중 에러 발생: {e}")
-                        # Calling p.get_action() again might change state or trigger new LLM call,
-                        # so log the error and don't try to re-fetch resp
-                        continue
-
+                
+                action_dict = p.get_action()  # Dict[str, Any] 반환
+                
+                if "error" in action_dict:
+                    self._log(f"플레이어 {p.id} 처형 동의 오류: {action_dict['error']}")
+                    continue
+                
+                final_score += action_dict.get("agree_execution", 0)
+                self._log(f"플레이어 {target_id} 처형 동의 여부: {action_dict.get('agree_execution')}")
                 success = final_score > 0
                 if success:
                     self.players[target_id].alive = False
@@ -222,49 +219,52 @@ class MafiaGame:
             if not p.alive or p.role == Role.CITIZEN:
                 continue
             p.observe(self.get_game_status(p.id))
-            try:
-                data = json.loads(p.get_action())
-                target = data.get("target_id")
-                if target is not None and self.players[target].alive:
-                    if p.role == Role.MAFIA:
-                        m_target = target
-                        self._log(f"마피아 {p.id}의 살해 목표: {m_target}")
-                        self.history.append(
-                            GameEvent(
-                                day=self.day,
-                                phase=self.phase,
-                                event_type=EventType.KILL,
-                                actor_id=p.id,
-                                target_id=target,
-                            )
-                        )
-                    elif p.role == Role.DOCTOR:
-                        d_target = target
-                        self._log(f"의사 {p.id}의 보호 목표: {d_target}")
-                        self.history.append(
-                            GameEvent(
-                                day=self.day,
-                                phase=self.phase,
-                                event_type=EventType.PROTECT,
-                                actor_id=p.id,
-                                target_id=target,
-                            )
-                        )
-                    elif p.role == Role.POLICE:
-                        p_target = target
-                        self._log(f"경찰 {p.id}의 조사 목표: {p_target}")
-                        self.history.append(
-                            GameEvent(
-                                day=self.day,
-                                phase=self.phase,
-                                event_type=EventType.POLICE_RESULT,
-                                actor_id=p.id,
-                                target_id=target,
-                                value=self.players[target].role,
-                            )
-                        )
-            except:
+            
+            action_dict = p.get_action()  # Dict[str, Any] 반환
+            
+            if "error" in action_dict:
+                self._log(f"플레이어 {p.id} 야간 행동 오류: {action_dict['error']}")
                 continue
+            
+            target = action_dict.get("target_id")
+            if target is not None and self.players[target].alive:
+                if p.role == Role.MAFIA:
+                    m_target = target
+                    self._log(f"마피아 {p.id}의 살해 목표: {m_target}")
+                    self.history.append(
+                        GameEvent(
+                            day=self.day,
+                            phase=self.phase,
+                            event_type=EventType.KILL,
+                            actor_id=p.id,
+                            target_id=target,
+                        )
+                    )
+                elif p.role == Role.DOCTOR:
+                    d_target = target
+                    self._log(f"의사 {p.id}의 보호 목표: {d_target}")
+                    self.history.append(
+                        GameEvent(
+                            day=self.day,
+                            phase=self.phase,
+                            event_type=EventType.PROTECT,
+                            actor_id=p.id,
+                            target_id=target,
+                        )
+                    )
+                elif p.role == Role.POLICE:
+                    p_target = target
+                    self._log(f"경찰 {p.id}의 조사 목표: {p_target}")
+                    self.history.append(
+                        GameEvent(
+                            day=self.day,
+                            phase=self.phase,
+                            event_type=EventType.POLICE_RESULT,
+                            actor_id=p.id,
+                            target_id=target,
+                            value=self.players[target].role,
+                        )
+                    )
 
         if m_target is not None and m_target != d_target:
             self.players[m_target].alive = False

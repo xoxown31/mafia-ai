@@ -2,7 +2,7 @@ import json
 import torch
 import torch.nn as nn
 import numpy as np
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 from torch.distributions import Categorical
 
 from core.agent.baseAgent import BaseAgent
@@ -68,6 +68,7 @@ class RLAgent(BaseAgent):
             raise ValueError(f"Unknown algorithm: {algorithm}")
         
         self.hidden_state = None
+        self.last_action = None  # select_action에서 결정된 discrete action index 저장
         
         self.expert_agent = None
         if use_il:
@@ -85,9 +86,87 @@ class RLAgent(BaseAgent):
         """BaseAgent의 추상 메서드 구현"""
         pass
     
-    def get_action(self) -> str:
-        """BaseAgent의 추상 메서드 구현"""
-        return json.dumps({"error": "Use select_action method for RL agents"})
+    def get_action(self) -> Dict[str, Any]:
+        """BaseAgent의 추상 메서드 구현 - last_action을 엔진 규격 딕셔너리로 변환"""
+        if self.last_action is None:
+            return {"error": "No action selected yet"}
+        
+        # 액션 인덱스를 게임 엔진 규격 딕셔너리로 매핑
+        # TODO: 실제 액션 공간 정의에 따라 매핑 로직 구현
+        # 예시: 인덱스 9 → {"discussion_status": "Continue", "role": 0, "target_id": -1}
+        return self._action_index_to_dict(self.last_action)
+    
+    def _action_index_to_dict(self, action_idx: int) -> Dict[str, Any]:
+        """
+        액션 인덱스(0~20)를 게임 엔진 규격 딕셔너리로 변환
+        
+        액션 공간 (env.py 기준):
+        - 0~7: 단순 지목
+        - 8: 기권
+        - 9: 시민 주장
+        - 10: 경찰 주장
+        - 11: 의사 주장
+        - 12: 마피아 주장
+        - 13~20: 경찰 주장 + 지목 복합 (13→0, 14→1, ..., 20→7)
+        """
+        if 0 <= action_idx <= 7:
+            # 단순 지목
+            return {
+                "target": int(action_idx),
+                "claim_role": -1,
+                "action_type": "target"
+            }
+        elif action_idx == 8:
+            # 기권
+            return {
+                "target": -1,
+                "claim_role": -1,
+                "action_type": "abstain"
+            }
+        elif action_idx == 9:
+            # 시민 주장
+            return {
+                "target": -1,
+                "claim_role": Role.CITIZEN,
+                "action_type": "claim"
+            }
+        elif action_idx == 10:
+            # 경찰 주장
+            return {
+                "target": -1,
+                "claim_role": Role.POLICE,
+                "action_type": "claim"
+            }
+        elif action_idx == 11:
+            # 의사 주장
+            return {
+                "target": -1,
+                "claim_role": Role.DOCTOR,
+                "action_type": "claim"
+            }
+        elif action_idx == 12:
+            # 마피아 주장
+            return {
+                "target": -1,
+                "claim_role": Role.MAFIA,
+                "action_type": "claim"
+            }
+        elif 13 <= action_idx <= 20:
+            # 경찰 주장 + 지목 복합
+            target_id = action_idx - 13
+            return {
+                "target": int(target_id),
+                "claim_role": Role.POLICE,
+                "action_type": "claim_and_target"
+            }
+        else:
+            # 범위 외 액션
+            return {
+                "target": -1,
+                "claim_role": -1,
+                "action_type": "invalid",
+                "error": f"Invalid action index: {action_idx}"
+            }
     
     def select_action(self, state, action_mask: Optional[np.ndarray] = None):
         """
@@ -109,6 +188,9 @@ class RLAgent(BaseAgent):
         
         state_dict = {'observation': obs, 'action_mask': mask}
         action, self.hidden_state = self.learner.select_action(state_dict, self.hidden_state)
+        
+        # last_action에 저장하여 get_action()에서 사용할 수 있도록 함
+        self.last_action = action
         
         return action
     

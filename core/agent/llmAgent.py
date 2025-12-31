@@ -75,9 +75,10 @@ class LLMAgent(BaseAgent):
                     f"[Player {self.id}] Belief update failed: {e}\nResponse from LLM: {response_json}"
                 )
 
-    def get_action(self) -> str:
+    def get_action(self) -> Dict[str, Any]:
+        """구조화된 딕셔너리 형태로 액션 반환"""
         if not self.current_status:
-            return json.dumps({"error": "No game status observed"})
+            return {"error": "No game status observed"}
 
         phase_name = self.current_status.phase.name
         role_name = self.role.name
@@ -90,13 +91,14 @@ class LLMAgent(BaseAgent):
 
         return self._execute_ai_logic(prompt_key)
 
-    def _execute_ai_logic(self, prompt_key: str) -> str:
+    def _execute_ai_logic(self, prompt_key: str) -> Dict[str, Any]:
+        """LLM 실행 및 응답을 딕셔너리로 파싱하여 반환"""
         status_json = self.current_status.model_dump_json(exclude_none=True)
         phase_name = self.current_status.phase.name
 
         prompt_data = self.yaml_data.get(prompt_key)
         if not prompt_data:
-            return json.dumps({"error": f"Prompt for {prompt_key} not found"})
+            return {"error": f"Prompt for {prompt_key} not found"}
 
         role_specific_system_msg = prompt_data.get("system", "")
         json_schema = self.phase_schemas.get(
@@ -123,9 +125,17 @@ class LLMAgent(BaseAgent):
         print(
             f"[Player {self.id}] Final System Msg:\n{final_system_msg}\n Final User Msg:\n{final_user_msg}\n"
         )
-        return self._call_llm(final_system_msg, final_user_msg)
+        
+        # LLM 호출 및 JSON 파싱
+        response_str = self._call_llm(final_system_msg, final_user_msg)
+        try:
+            return json.loads(response_str)
+        except json.JSONDecodeError as e:
+            print(f"[Player {self.id}] Failed to parse LLM response: {e}")
+            return {"error": "Invalid JSON response from LLM", "raw_response": response_str}
 
     def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
+        """LLM API 호출 - JSON 문자열 반환"""
         try:
             response = self.client.chat.completions.create(
                 model=self.model,

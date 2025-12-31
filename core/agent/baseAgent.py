@@ -1,5 +1,5 @@
 from abc import *
-from typing import List
+from typing import List, Dict, Any
 import numpy as np
 import random
 from config import config, Role
@@ -50,6 +50,6 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def get_action(self, conversation_log: str) -> str:
-        """주관적 추론(Hunch) 및 결정"""
+    def get_action(self) -> Dict[str, Any]:
+        """주관적 추론(Hunch) 및 결정 - 구조화된 딕셔너리 반환"""
         pass
