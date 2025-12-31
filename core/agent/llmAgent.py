@@ -158,7 +158,9 @@ class LLMAgent(BaseAgent):
 
         prompt_data = self.yaml_data.get(prompt_key)
         if not prompt_data:
-            return {"error": f"Prompt for {prompt_key} not found"}
+            print(f"[Player {self.id}] Warning: Prompt key '{prompt_key}' not found, returning empty action")
+            # 프롬프트가 없으면 빈 target_id 반환 (PASS로 처리됨)
+            return {"target_id": -1}
 
         role_specific_system_msg = prompt_data.get("system", "")
         json_schema = self.phase_schemas.get(
