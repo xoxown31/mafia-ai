@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Union
 from config import Role, Phase, EventType
 
+
 class PlayerStatus(BaseModel):
     id: int
     alive: bool
@@ -14,6 +15,7 @@ class GameEvent(BaseModel):
     actor_id: int
     target_id: Optional[int] = None
     value: Union[Role, bool, None] = None
+
 
 class GameStatus(BaseModel):
     day: int

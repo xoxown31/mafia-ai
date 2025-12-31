@@ -24,14 +24,16 @@ class BaseAgent(ABC):
         self.id = player_id
         self.role = role
         self.alive = True
-        self.current_status: GameStatus = None
-        
+        rent_status: GameStatus = None
+
         # Belief Matrix: (N x 4) - 각 플레이어가 각 직업일 것이라는 신뢰 점수
         # 열(Col): [0: 시민, 1: 경찰, 2: 의사, 3: 마피아]
-        self.belief = np.zeros((config.game.PLAYER_COUNT, 4), dtype=np.float32)
+        self.belief = np.random.normal(0, 0.1, (config.game.PLAYER_COUNT, len(Role)))
 
         # 자신의 belief는 확실하게 설정
-        self.belief[self.id, self.role] = 100.0
+        role_idx = int(self.role)
+        self.belief[self.id, :] = -100.0
+        self.belief[self.id, role_idx] = 100.0
 
         # 게임 히스토리 추적
         self.vote_history = [0] * config.game.PLAYER_COUNT
