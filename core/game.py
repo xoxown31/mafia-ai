@@ -166,21 +166,28 @@ class MafiaGame:
                     f"플레이어 {p.id}는 자신에게 투표할 수 없습니다. 투표 무효 처리."
                 )
                 target = -1
-            else:
-                self._log(f"플레이어 {p.id} 투표: {target}. 이유: {reason}")
 
             if target is not None and target != -1:
                 votes[target] += 1
-                self.history.append(
-                    GameEvent(
-                        day=self.day,
-                        phase=self.phase,
-                        event_type=EventType.VOTE,
-                        actor_id=p.id,
-                        target_id=target,
-                        value=None,
-                    )
+                
+                # 이벤트 생성 및 로깅
+                event = GameEvent(
+                    day=self.day,
+                    phase=self.phase,
+                    event_type=EventType.VOTE,
+                    actor_id=p.id,
+                    target_id=target,
+                    value=None,
                 )
+                self.history.append(event)
+                
+                # LogManager를 통한 내러티브 생성
+                if self.logger:
+                    narrative = self.logger.interpret_event(event)
+                    log_message = narrative + (f" 이유: {reason}" if reason else "")
+                    self._log(log_message)
+                else:
+                    self._log(f"플레이어 {p.id} 투표: {target}. 이유: {reason}")
         
         # 투표 결과 저장 (다음 단계에서 사용)
         self._last_votes = votes
@@ -221,9 +228,29 @@ class MafiaGame:
                 success = final_score > 0
                 if success:
                     self.players[target_id].alive = False
-                    self._log(
-                        f"처형 성공: {target_id} ({self.players[target_id].role.name})"
-                    )
+                
+                # 처형 이벤트 생성 및 로깅
+                execute_event = GameEvent(
+                    day=self.day,
+                    phase=self.phase,
+                    event_type=EventType.EXECUTE,
+                    actor_id=-1,
+                    target_id=target_id,
+                    value=self.players[target_id].role if success else None,
+                )
+                self.history.append(execute_event)
+                
+                # LogManager를 통한 내러티브 생성
+                if self.logger:
+                    self._log(self.logger.interpret_event(execute_event))
+                else:
+                    if success:
+                        self._log(f"처형 성공: {target_id} ({self.players[target_id].role.name})")
+                    else:
+                        self._log(f"처형 실패: {target_id}")
+                
+                # 경찰 결과 이벤트 (처형 성공 시 역할 공개)
+                if success:
                     self.history.append(
                         GameEvent(
                             day=self.day,
@@ -234,16 +261,6 @@ class MafiaGame:
                             value=self.players[target_id].role,
                         )
                     )
-                self.history.append(
-                    GameEvent(
-                        day=self.day,
-                        phase=self.phase,
-                        event_type=EventType.EXECUTE,
-                        actor_id=-1,
-                        target_id=target_id,
-                        value=success,
-                    )
-                )
 
         # Phase End: observe만 호출
         for p in self.players:
@@ -251,61 +268,75 @@ class MafiaGame:
                 p.observe(self.get_game_status(p.id))
 
     def _process_night(self):
-        m_target, d_target, p_target = None, None, None
+        """
+        밤 단계 처리 - 역할별 로직을 매핑으로 분리하여 선언적 구조 유지
+        """
+        # 1. 역할별 행동 설정 매핑
+        role_config = {
+            Role.MAFIA: {"event_type": EventType.KILL, "value": None},
+            Role.DOCTOR: {"event_type": EventType.PROTECT, "value": None},
+            Role.POLICE: {"event_type": EventType.POLICE_RESULT, "value": "role_of_target"},
+        }
+        
+        # 2. 밤 행동 결과 저장
+        night_targets = {}
+        
         for p in self.players:
             if not p.alive or p.role == Role.CITIZEN:
                 continue
-            p.observe(self.get_game_status(p.id))
             
+            p.observe(self.get_game_status(p.id))
             action_dict = p.get_action()  # Dict[str, Any] 반환
             
             if "error" in action_dict:
                 self._log(f"플레이어 {p.id} 야간 행동 오류: {action_dict['error']}")
                 continue
             
-            target = action_dict.get("target_id")
-            if target is not None and self.players[target].alive:
-                if p.role == Role.MAFIA:
-                    m_target = target
-                    self._log(f"마피아 {p.id}의 살해 목표: {m_target}")
-                    self.history.append(
-                        GameEvent(
-                            day=self.day,
-                            phase=self.phase,
-                            event_type=EventType.KILL,
-                            actor_id=p.id,
-                            target_id=target,
-                        )
-                    )
-                elif p.role == Role.DOCTOR:
-                    d_target = target
-                    self._log(f"의사 {p.id}의 보호 목표: {d_target}")
-                    self.history.append(
-                        GameEvent(
-                            day=self.day,
-                            phase=self.phase,
-                            event_type=EventType.PROTECT,
-                            actor_id=p.id,
-                            target_id=target,
-                        )
-                    )
-                elif p.role == Role.POLICE:
-                    p_target = target
-                    self._log(f"경찰 {p.id}의 조사 목표: {p_target}")
-                    self.history.append(
-                        GameEvent(
-                            day=self.day,
-                            phase=self.phase,
-                            event_type=EventType.POLICE_RESULT,
-                            actor_id=p.id,
-                            target_id=target,
-                            value=self.players[target].role,
-                        )
-                    )
+            target_id = action_dict.get("target_id")
+            if target_id is not None and self.players[target_id].alive:
+                # 3. 역할별 설정 가져오기
+                config = role_config.get(p.role)
+                if not config:
+                    continue
+                
+                # 4. 타겟 저장 (살해/보호 판정용)
+                night_targets[p.role] = target_id
+                
+                # 5. 이벤트 생성
+                event_value = None
+                if config["value"] == "role_of_target":
+                    event_value = self.players[target_id].role
+                
+                event = GameEvent(
+                    day=self.day,
+                    phase=self.phase,
+                    event_type=config["event_type"],
+                    actor_id=p.id,
+                    target_id=target_id,
+                    value=event_value,
+                )
+                self.history.append(event)
+                
+                # 6. LogManager를 통한 내러티브 생성 (if-else 제거)
+                if self.logger:
+                    self._log(self.logger.interpret_event(event))
+                else:
+                    # Fallback
+                    role_name = {Role.MAFIA: "마피아", Role.DOCTOR: "의사", Role.POLICE: "경찰"}.get(p.role, "")
+                    action_name = {
+                        EventType.KILL: "살해 목표",
+                        EventType.PROTECT: "보호 목표",
+                        EventType.POLICE_RESULT: "조사 목표"
+                    }.get(config["event_type"], "행동")
+                    self._log(f"{role_name} {p.id}의 {action_name}: {target_id}")
 
-        if m_target is not None and m_target != d_target:
-            self.players[m_target].alive = False
-            self._log(f"살해 발생: {m_target}")
+        # 7. 살해 및 보호 처리
+        mafia_target = night_targets.get(Role.MAFIA)
+        doctor_target = night_targets.get(Role.DOCTOR)
+        
+        if mafia_target is not None and mafia_target != doctor_target:
+            self.players[mafia_target].alive = False
+            self._log(f"살해 발생: {mafia_target}")
 
         # Phase End: observe만 호출
         for p in self.players:
