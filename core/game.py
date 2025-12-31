@@ -8,22 +8,19 @@ from core.agent.baseAgent import BaseAgent
 
 
 class MafiaGame:
-    def __init__(self, log_file=None, agents: Optional[List[BaseAgent]] = None):
+    def __init__(self, log_file=None, agents: Optional[List[BaseAgent]] = None, logger=None):
         """
         Args:
-            log_file: \ub85c\uadf8 \ud30c\uc77c \ud578\ub4e4
-            agents: \uc678\ubd80\uc5d0\uc11c \uc8fc\uc785\ubc1b\uc744 \uc5d0\uc774\uc804\ud2b8 \ub9ac\uc2a4\ud2b8 (\uc120\ud0dd\uc801)
+            log_file: (Deprecated) 레거시 로그 파일 핸들 - 하위 호환성을 위해 유지
+            agents: 외부에서 주입받을 에이전트 리스트 (선택적)
+            logger: LogManager 인스턴스 (선택적)
         """
         self.players: List[BaseAgent] = agents if agents is not None else []
         self.day = 1
         self.phase = Phase.DAY_DISCUSSION
         self.history: List[GameEvent] = []
-        self.log_file = log_file
-
-    def _log(self, message):
-        if self.log_file:
-            self.log_file.write(message + "\n")
-            self.log_file.flush()
+        self.log_file = log_file  # 레거시 지원
+        self.logger = logger
 
     def reset(self, agents: Optional[List[BaseAgent]] = None) -> GameStatus:
         """
@@ -49,7 +46,18 @@ class MafiaGame:
         random.shuffle(roles)
         for p, r in zip(self.players, roles):
             p.role = r
-            self._log(f"\ud50c\ub808\uc774\uc5b4 {p.id}: {p.role.name}")
+            # 역할 할당 이벤트 로깅
+            if self.logger:
+                # GameEvent로 기록 (JSONL 저장용)
+                event = GameEvent(
+                    day=0,
+                    phase=Phase.DAY_DISCUSSION,
+                    event_type=EventType.POLICE_RESULT,  # 역할 공개 이벤트로 활용
+                    actor_id=-1,
+                    target_id=p.id,
+                    value=p.role,
+                )
+                self.logger.log_event(event)
 
         return self.get_game_status()
 
@@ -60,8 +68,6 @@ class MafiaGame:
         is_over, is_win = self.check_game_over()
         if is_over:
             return self.get_game_status(), is_over, is_win
-
-        self._log(f"\n[Day {self.day} | {self.phase.name}]")
 
         if self.phase == Phase.DAY_DISCUSSION:
             self._process_discussion()
@@ -81,7 +87,6 @@ class MafiaGame:
         return self.get_game_status(), is_over, is_win
 
     def _process_discussion(self):
-        self._log("토론 시작")
         for _ in range(2):
             ended = False
             for p in self.players:
@@ -94,7 +99,6 @@ class MafiaGame:
                     print(action_dict, end="\n")
                     
                     if "error" in action_dict:
-                        self._log(f"플레이어 {p.id} 액션 오류: {action_dict['error']}")
                         continue
                     
                     if action_dict.get("discussion_status") == "End":
@@ -115,26 +119,11 @@ class MafiaGame:
                         value=Role(role_id) if role_id is not None else None,
                     )
                     
-                    # LogManager를 통한 내러티브 생성 (직접 문자열 조립 제거)
-                    if self.logger:
-                        narrative = self.logger.interpret_event(event)
-                        log_message = narrative + (f" 이유: {reason}" if reason else "")
-                    else:
-                        # Fallback: logger가 없을 경우 기본 포맷
-                        role = p.role.name if role_id is None else Role(role_id).name
-                        if role_id is not None:
-                            if target_id == p.id or target_id == -1:
-                                log_message = f"Player {p.id}는 자신이 {role}라고 주장"
-                            else:
-                                log_message = f"Player {p.id}는 Player {target_id}가 {role}라고 주장"
-                        else:
-                            log_message = f"Player {p.id}가 침묵."
-                        log_message += (f" 이유: {reason}" if reason else "")
-                    
-                    self._log(log_message)
+                    # 이벤트를 history와 logger에 기록
                     self.history.append(event)
+                    if self.logger:
+                        self.logger.log_event(event)
                 except Exception as e:
-                    self._log(f"플레이어 {p.id} 액션 처리 중 에러 발생: {e}")
                     continue
             
             if ended:
@@ -155,16 +144,12 @@ class MafiaGame:
             action_dict = p.get_action()  # Dict[str, Any] 반환
             
             if "error" in action_dict:
-                self._log(f"플레이어 {p.id} 투표 오류: {action_dict['error']}")
                 continue
             
             target = action_dict.get("target_id")
             reason = action_dict.get("reason", "")
 
             if target == p.id:
-                self._log(
-                    f"플레이어 {p.id}는 자신에게 투표할 수 없습니다. 투표 무효 처리."
-                )
                 target = -1
 
             if target is not None and target != -1:
@@ -180,14 +165,8 @@ class MafiaGame:
                     value=None,
                 )
                 self.history.append(event)
-                
-                # LogManager를 통한 내러티브 생성
                 if self.logger:
-                    narrative = self.logger.interpret_event(event)
-                    log_message = narrative + (f" 이유: {reason}" if reason else "")
-                    self._log(log_message)
-                else:
-                    self._log(f"플레이어 {p.id} 투표: {target}. 이유: {reason}")
+                    self.logger.log_event(event)
         
         # 투표 결과 저장 (다음 단계에서 사용)
         self._last_votes = votes
@@ -199,7 +178,6 @@ class MafiaGame:
 
     def _process_execute(self):
         if not self._last_votes:
-            self._log("투표 결과가 없습니다.")
             return
         
         max_v = max(self._last_votes)
@@ -218,12 +196,10 @@ class MafiaGame:
                     action_dict = p.get_action()  # Dict[str, Any] 반환
                     
                     if "error" in action_dict:
-                        self._log(f"플레이어 {p.id} 처형 동의 오류: {action_dict['error']}")
                         continue
                     
                     agree = action_dict.get("agree_execution", 0)
                     final_score += agree
-                    self._log(f"플레이어 {p.id} 처형 동의: {agree}")
                 
                 success = final_score > 0
                 if success:
@@ -239,28 +215,22 @@ class MafiaGame:
                     value=self.players[target_id].role if success else None,
                 )
                 self.history.append(execute_event)
-                
-                # LogManager를 통한 내러티브 생성
                 if self.logger:
-                    self._log(self.logger.interpret_event(execute_event))
-                else:
-                    if success:
-                        self._log(f"처형 성공: {target_id} ({self.players[target_id].role.name})")
-                    else:
-                        self._log(f"처형 실패: {target_id}")
+                    self.logger.log_event(execute_event)
                 
                 # 경찰 결과 이벤트 (처형 성공 시 역할 공개)
                 if success:
-                    self.history.append(
-                        GameEvent(
-                            day=self.day,
-                            phase=self.phase,
-                            event_type=EventType.POLICE_RESULT,
-                            actor_id=-1,
-                            target_id=target_id,
-                            value=self.players[target_id].role,
-                        )
+                    police_result_event = GameEvent(
+                        day=self.day,
+                        phase=self.phase,
+                        event_type=EventType.POLICE_RESULT,
+                        actor_id=-1,
+                        target_id=target_id,
+                        value=self.players[target_id].role,
                     )
+                    self.history.append(police_result_event)
+                    if self.logger:
+                        self.logger.log_event(police_result_event)
 
         # Phase End: observe만 호출
         for p in self.players:
@@ -289,7 +259,6 @@ class MafiaGame:
             action_dict = p.get_action()  # Dict[str, Any] 반환
             
             if "error" in action_dict:
-                self._log(f"플레이어 {p.id} 야간 행동 오류: {action_dict['error']}")
                 continue
             
             target_id = action_dict.get("target_id")
@@ -316,19 +285,8 @@ class MafiaGame:
                     value=event_value,
                 )
                 self.history.append(event)
-                
-                # 6. LogManager를 통한 내러티브 생성 (if-else 제거)
                 if self.logger:
-                    self._log(self.logger.interpret_event(event))
-                else:
-                    # Fallback
-                    role_name = {Role.MAFIA: "마피아", Role.DOCTOR: "의사", Role.POLICE: "경찰"}.get(p.role, "")
-                    action_name = {
-                        EventType.KILL: "살해 목표",
-                        EventType.PROTECT: "보호 목표",
-                        EventType.POLICE_RESULT: "조사 목표"
-                    }.get(config["event_type"], "행동")
-                    self._log(f"{role_name} {p.id}의 {action_name}: {target_id}")
+                    self.logger.log_event(event)
 
         # 7. 살해 및 보호 처리
         mafia_target = night_targets.get(Role.MAFIA)
@@ -336,7 +294,6 @@ class MafiaGame:
         
         if mafia_target is not None and mafia_target != doctor_target:
             self.players[mafia_target].alive = False
-            self._log(f"살해 발생: {mafia_target}")
 
         # Phase End: observe만 호출
         for p in self.players:
