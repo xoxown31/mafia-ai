@@ -5,6 +5,7 @@ class RolloutBuffer:
         self.logprobs = []
         self.rewards = []
         self.is_terminals = []
+        self.hidden_states = []
     
     def clear(self):
         del self.actions[:]
@@ -12,3 +13,4 @@ class RolloutBuffer:
         del self.logprobs[:]
         del self.rewards[:]
         del self.is_terminals[:]
+        del self.hidden_states[:]
