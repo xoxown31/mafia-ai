@@ -54,10 +54,10 @@ class LLMAgent(BaseAgent):
 
         # 2. LLM-based Inference (Hunch)
         if self.current_status:
-            response_json = self._execute_ai_logic("BELIEF_UPDATE")
+            response_data = self._execute_ai_logic("BELIEF_UPDATE")
             try:
-                data = json.loads(response_json)
-                updates = data.get("belief_updates", [])
+                # _execute_ai_logic이 이미 딕셔너리를 반환하므로 json.loads 불필요
+                updates = response_data.get("belief_updates", [])
                 for up in updates:
                     p_id = up.get("player_id")
                     role_str = up.get("role")
@@ -70,9 +70,9 @@ class LLMAgent(BaseAgent):
                             self.belief[p_id, col_idx] = np.clip(
                                 self.belief[p_id, col_idx] + delta, -100, 100
                             )
-            except (json.JSONDecodeError, AttributeError) as e:
+            except (AttributeError, KeyError) as e:
                 print(
-                    f"[Player {self.id}] Belief update failed: {e}\nResponse from LLM: {response_json}"
+                    f"[Player {self.id}] Belief update failed: {e}\nResponse from LLM: {response_data}"
                 )
 
     def translate_to_engine(self, action_dict: Dict[str, Any]) -> MafiaAction:
