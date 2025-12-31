@@ -94,10 +94,22 @@ class LLMAgent(BaseAgent):
         role_str = action_dict.get("role")
         discussion_status = action_dict.get("discussion_status", "Continue")
         
-        # 역할 문자열을 Role enum으로 변환
+        # 역할을 Role enum으로 변환 (정수 또는 문자열 처리)
         claim_role = None
-        if role_str and hasattr(Role, role_str.upper()):
-            claim_role = Role[role_str.upper()]
+        if role_str is not None:
+            if isinstance(role_str, int):
+                # 정수인 경우 (0:CITIZEN, 1:POLICE, 2:DOCTOR, 3:MAFIA)
+                try:
+                    claim_role = Role(role_str)
+                except ValueError:
+                    print(f"[Player {self.id}] Invalid role integer: {role_str}")
+            elif isinstance(role_str, str):
+                # 문자열인 경우
+                role_upper = role_str.upper()
+                if hasattr(Role, role_upper):
+                    claim_role = Role[role_upper]
+                else:
+                    print(f"[Player {self.id}] Invalid role string: {role_str}")
         
         # 토론 종료 → PASS
         if discussion_status == "End":
