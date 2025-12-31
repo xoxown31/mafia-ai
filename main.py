@@ -7,6 +7,7 @@ import tkinter as tk
 from core.env import MafiaEnv
 from core.game import MafiaGame
 from core.agent.rlAgent import RLAgent
+from core.agent.llmAgent import LLMAgent
 from core.logger import LogManager
 from config import Role
 from PyQt6.QtWidgets import QApplication
@@ -21,6 +22,66 @@ try:
     GUI_AVAILABLE = True
 except ImportError:
     GUI_AVAILABLE = False
+
+
+def _run_full_game_simulation(player_configs, args, logger):
+    """
+    player_configs에 따라 LLM/RL 혼합 또는 순수 LLM 게임을 실행
+    """
+    from core.agent.baseAgent import BaseAgent
+    
+    # 각 플레이어 설정에 맞는 에이전트 생성
+    agents = []
+    for i, config in enumerate(player_configs):
+        if config['type'] == 'llm':
+            agent = LLMAgent(player_id=i, logger=logger)
+        else:  # rl
+            # RL 에이전트는 현재 MafiaGame과 호환되지 않을 수 있음
+            # 추후 BaseAgent 기반으로 통합 필요
+            print(f"Warning: RL agent in position {i} not fully supported in game simulation yet")
+            # 임시로 LLM으로 대체
+            agent = LLMAgent(player_id=i, logger=logger)
+        agents.append(agent)
+    
+    # MafiaGame 생성 및 실행
+    game = MafiaGame(agents=agents, logger=logger)
+    
+    episodes = getattr(args, 'episodes', 1)
+    print(f"Running {episodes} game(s) with player configuration:")
+    for i, config in enumerate(player_configs):
+        print(f"  Player {i}: {config['type'].upper()}")
+    
+    # 에피소드 실행
+    for ep in range(episodes):
+        print(f"\n{'='*50}")
+        print(f"Episode {ep + 1}/{episodes}")
+        print(f"{'='*50}")
+        
+        status = game.reset(agents=agents)
+        
+        # 역할 출력
+        print("\n[Role Assignment]")
+        for p in game.players:
+            print(f"  Player {p.id}: {p.role}")
+        
+        turn = 0
+        max_turns = 50  # 무한 루프 방지
+        
+        while turn < max_turns:
+            status, is_over, is_win = game.process_turn()
+            turn += 1
+            
+            if is_over:
+                result = "CITIZEN WIN" if is_win else "MAFIA WIN"
+                print(f"\n{'='*50}")
+                print(f"Game Over! {result}")
+                print(f"Total turns: {turn}")
+                print(f"{'='*50}\n")
+                break
+        else:
+            print(f"\nGame reached maximum turn limit ({max_turns})")
+    
+    print(f"\nCompleted {episodes} episode(s)")
 
 
 def run_simulation(args):
@@ -95,7 +156,7 @@ def run_simulation(args):
             # Player 0 설정 추출
             player0_config = player_configs[0]
             
-            # Player 0이 RL인 경우에만 학습/테스트 진행
+            # Player 0이 RL인 경우 학습/테스트 진행
             if player0_config['type'] == 'rl':
                 env = MafiaEnv()
                 state_dim = env.observation_space["observation"].shape[0]
@@ -118,9 +179,11 @@ def run_simulation(args):
                     train(env, agent, args, logger)
                 elif args.mode == "test":
                     test(env, agent, args)
+            
+            # Player 0이 LLM인 경우 또는 혼합 구성인 경우 - 풀 게임 시뮬레이션
             else:
-                print("Player 0 is LLM. Full game simulation not yet implemented.")
-                # TODO: 전체 게임 시뮬레이션 로직 구현
+                print("Running full game simulation with mixed/LLM agents.")
+                _run_full_game_simulation(player_configs, args, logger)
     
     finally:
         # LogManager 리소스 정리
