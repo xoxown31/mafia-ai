@@ -7,9 +7,8 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 from core.agent.baseAgent import BaseAgent
-from config import config, Role, Phase, EventType
-from state import GameStatus, GameEvent
-from core.action import ActionTranslator, EngineAction
+from config import config, Role, Phase, EventType, ActionType
+from state import GameStatus, GameEvent, MafiaAction
 
 if TYPE_CHECKING:
     from core.logger import LogManager
@@ -76,33 +75,54 @@ class LLMAgent(BaseAgent):
                     f"[Player {self.id}] Belief update failed: {e}\nResponse from LLM: {response_json}"
                 )
 
-    def translate_to_engine(self, action_dict: Dict[str, Any]) -> EngineAction:
+    def translate_to_engine(self, action_dict: Dict[str, Any]) -> MafiaAction:
         """
-        LLM JSON 응답을 EngineAction 튜플로 변환하는 순수 번역기
+        LLM JSON 응답을 MafiaAction으로 변환하는 순수 번역기
         
-        Stateless Translator:
-        - 속성에 의존하지 않고 인자로 받은 action_dict만 사용
-        - ActionTranslator를 통한 즉시 변환
-        - 테스트 및 디버깅이 용이함
+        딕셔너리 구조:
+        - target_id: int (지목 대상, -1은 없음)
+        - role: Optional[Role] (주장하는 역할)
+        - discussion_status: str (토론 종료 여부, "End"면 PASS)
         
         Args:
             action_dict: LLM이 반환한 JSON 딕셔너리
         
         Returns:
-            (ActionType, target_id, role_value) 튜플
+            MafiaAction 객체
         """
-        return ActionTranslator.to_engine_action(action_dict)
+        target_id = action_dict.get("target_id", -1)
+        role_str = action_dict.get("role")
+        discussion_status = action_dict.get("discussion_status", "Continue")
+        
+        # 역할 문자열을 Role enum으로 변환
+        claim_role = None
+        if role_str and hasattr(Role, role_str.upper()):
+            claim_role = Role[role_str.upper()]
+        
+        # 토론 종료 → PASS
+        if discussion_status == "End":
+            return MafiaAction(action_type=ActionType.PASS, target_id=-1, claim_role=None)
+        
+        # 역할 주장 (타겟 포함 여부 무관하게 CLAIM으로 통합)
+        if claim_role is not None:
+            return MafiaAction(action_type=ActionType.CLAIM, target_id=target_id, claim_role=claim_role)
+        
+        # 단순 지목
+        if target_id != -1:
+            return MafiaAction(action_type=ActionType.TARGET_ACTION, target_id=target_id, claim_role=None)
+        
+        # 기권
+        return MafiaAction(action_type=ActionType.PASS, target_id=-1, claim_role=None)
     
-    def get_action(self) -> EngineAction:
+    def get_action(self) -> MafiaAction:
         """
-        LLM의 JSON 응답을 EngineAction 튜플로 변환하여 반환
+        LLM의 JSON 응답을 MafiaAction으로 변환하여 반환
         
         Note: 이 메서드는 내부적으로 _execute_ai_logic()을 호출하여
         LLM 응답을 얻은 후 translate_to_engine()으로 변환합니다.
         """
         if not self.current_status:
-            from core.action import ActionType
-            return (ActionType.NO_ACTION, -1, None)
+            return MafiaAction(action_type=ActionType.PASS, target_id=-1, claim_role=None)
 
         phase_name = self.current_status.phase.name
         role_name = self.role.name

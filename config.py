@@ -15,13 +15,21 @@ class Phase(IntEnum):
     DAY_EXECUTE = 2
     NIGHT = 3
 
+class ActionType(IntEnum):
+    """통합 액션 타입 - 에이전트의 의도를 표현"""
+    PASS = 0              # 침묵 또는 기권
+    TARGET_ACTION = 1     # 지목이 포함된 모든 행동 (투표, 킬, 조사, 치료 등)
+    CLAIM = 2             # 정체 주장 (자기 주장 및 타인 지정 주장)
+
 class EventType(IntEnum):
-    CLAIM = 0
-    VOTE = 1
-    POLICE_RESULT = 2
-    KILL = 3
-    EXECUTE = 4
-    PROTECT = 5
+    """게임 이벤트 타입 - 엔진의 기록"""
+    NO_ACTION = 0         # 기권/침묵
+    CLAIM = 1             # 역할 주장
+    VOTE = 2              # 투표
+    POLICE_RESULT = 3     # 경찰 조사 결과
+    KILL = 4              # 마피아 킬
+    EXECUTE = 5           # 처형
+    PROTECT = 6           # 의사 보호
 
 class GameSettings(BaseSettings):
     PLAYER_COUNT: int = 8

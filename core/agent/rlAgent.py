@@ -11,21 +11,20 @@ from ai.model import DynamicActorCritic
 from ai.ppo import PPO
 from ai.reinforce import REINFORCE
 from config import config, Role
-from state import GameStatus, GameEvent
-from core.action import RLActionMapper, EngineAction
+from state import GameStatus, GameEvent, MafiaAction
 
 
 class RLAgent(BaseAgent):
     """
     PPO, REINFORCE, IL, RNN을 모두 지원하는 통합 RL 에이전트
     
-    알고리즘 로직은 ai/ppo.py, ai/reinforce.py에 위임하여 SRP 준수
+    Multi-Discrete 액션 공간 지원: [Type, Target, Role]
     
     Args:
         player_id: 플레이어 ID
         role: 플레이어 역할
         state_dim: 상태 벡터 차원
-        action_dim: 행동 공간 크기
+        action_dims: Multi-Discrete 액션 차원 리스트 [3, 9, 5]
         algorithm: "ppo" 또는 "reinforce"
         backbone: "mlp", "lstm", "gru"
         use_il: Imitation Learning 사용 여부
@@ -38,7 +37,7 @@ class RLAgent(BaseAgent):
         player_id: int,
         role: Role,
         state_dim: int,
-        action_dim: int,
+        action_dims: List[int] = [3, 9, 5],  # [Type, Target, Role]
         algorithm: str = "ppo",
         backbone: str = "mlp",
         use_il: bool = False,
@@ -51,11 +50,14 @@ class RLAgent(BaseAgent):
         self.backbone = backbone.lower()
         self.use_il = use_il
         self.state_dim = state_dim
-        self.action_dim = action_dim
+        self.action_dims = action_dims
+        
+        # Multi-Discrete 지원을 위한 총 액션 수 계산
+        total_action_dim = sum(action_dims)  # 3 + 9 + 5 = 17
         
         self.policy = DynamicActorCritic(
             state_dim=state_dim,
-            action_dim=action_dim,
+            action_dim=total_action_dim,
             backbone=backbone,
             hidden_dim=hidden_dim,
             num_layers=num_layers
@@ -69,7 +71,7 @@ class RLAgent(BaseAgent):
             raise ValueError(f"Unknown algorithm: {algorithm}")
         
         self.hidden_state = None
-        # last_action 제거: stateless 번역기로 전환
+        self.current_action = None  # 현재 액션 저장
         
         self.expert_agent = None
         if use_il:
@@ -87,53 +89,33 @@ class RLAgent(BaseAgent):
         """BaseAgent의 추상 메서드 구현"""
         pass
     
-    def translate_to_engine(self, action_idx: int) -> EngineAction:
-        """
-        액션 인덱스를 EngineAction 튜플로 변환하는 순수 번역기
-        
-        Stateless Translator:
-        - 속성에 의존하지 않고 인자로 받은 action_idx만 사용
-        - 모든 '해석'은 이 메서드 내부에서 완료
-        - 테스트 및 디버깅이 용이함
-        
-        Args:
-            action_idx: PPO/REINFORCE가 출력한 액션 인덱스 (0~20)
-        
-        Returns:
-            (ActionType, target_id, role_value) 튜플
-        """
-        return RLActionMapper.action_index_to_engine(action_idx)
+    def set_action(self, action: MafiaAction):
+        """env.step()에서 호출되어 액션 설정"""
+        self.current_action = action
     
-    def get_action(self) -> EngineAction:
+    def get_action(self) -> MafiaAction:
         """
-        BaseAgent 호환성을 위한 메서드
+        BaseAgent 호환성을 위한 메서드 - MafiaAction 반환
         
-        Note: env.step()에서 translate_to_engine()으로 변환한 결과를
-        임시 속성(_temp_engine_action)에 저장하고, 이 메서드가 반환합니다.
-        
-        향후 game.apply_action() 구조로 변경되면 이 메서드는 제거될 예정입니다.
+        env.step()에서 설정한 current_action을 반환
         """
-        if hasattr(self, '_temp_engine_action'):
-            return self._temp_engine_action
+        if self.current_action is not None:
+            return self.current_action
         
-        # 폴백: 기권
-        from core.action import ActionType
-        return (ActionType.NO_ACTION, -1, None)
+        # 폴백: PASS 액션
+        from config import ActionType
+        return MafiaAction(action_type=ActionType.PASS, target_id=-1, claim_role=None)
     
-    def select_action(self, state, action_mask: Optional[np.ndarray] = None) -> int:
+    def select_action_vector(self, state, action_mask: Optional[np.ndarray] = None) -> List[int]:
         """
-        상태를 받아 행동을 선택 (순수 함수)
-        
-        Stateless Design:
-        - 속성에 저장하지 않고 즉시 반환
-        - 반환된 인덱스는 translate_to_engine()으로 변환
+        상태를 받아 Multi-Discrete 액션 벡터를 선택
         
         Args:
             state: 상태 벡터 또는 딕셔너리
-            action_mask: 유효한 행동 마스크
+            action_mask: 유효한 행동 마스크 (3, 9, 5) 형태
         
         Returns:
-            action_idx: 선택된 행동 인덱스 (0~20)
+            action_vector: [Type, Target, Role] 형태의 리스트
         """
         if isinstance(state, dict):
             obs = state['observation']
@@ -142,10 +124,20 @@ class RLAgent(BaseAgent):
             obs = state
             mask = action_mask
         
+        # TODO: Multi-Discrete 지원을 위한 learner 수정 필요
+        # 현재는 임시로 Discrete 방식 사용
         state_dict = {'observation': obs, 'action_mask': mask}
-        action, self.hidden_state = self.learner.select_action(state_dict, self.hidden_state)
+        action_idx, self.hidden_state = self.learner.select_action(state_dict, self.hidden_state)
         
-        return action  # 속성에 저장하지 않고 즉시 반환
+        # 임시: action_idx를 Multi-Discrete 벡터로 변환
+        # Type (0~2), Target (0~8), Role (0~4) 순서로 분해
+        action_type = action_idx % 3
+        action_idx //= 3
+        target = action_idx % 9
+        action_idx //= 9
+        role = action_idx % 5
+        
+        return [action_type, target, role]
     
     def store_reward(self, reward: float, is_terminal: bool = False):
         """보상 저장"""

@@ -1,11 +1,10 @@
 from typing import List, Dict, Tuple, Optional
 import random
 import json
-from config import config, Role, Phase, EventType
-from state import GameStatus, GameEvent, PlayerStatus
+from config import config, Role, Phase, EventType, ActionType
+from state import GameStatus, GameEvent, PlayerStatus, MafiaAction
 from core.agent.llmAgent import LLMAgent
 from core.agent.baseAgent import BaseAgent
-from core.action import ActionType, EngineAction, ActionTranslator
 
 
 class MafiaGame:
@@ -87,9 +86,15 @@ class MafiaGame:
         return self.get_game_status(), is_over, is_win
 
     def _process_discussion(self):
-        """토론 단계 처리 - Engine API: EngineAction 튜플만 받음"""
-        for _ in range(2):
-            ended = False
+        """
+        토론 단계 처리 - 전원 침묵 시 종료
+        
+        변경사항: 생존한 모든 플레이어가 동시에 PASS를 선택했을 때만 토론 종료
+        """
+        for _ in range(2):  # 최대 2라운드
+            pass_count = 0
+            alive_count = sum(1 for p in self.players if p.alive)
+            
             for p in self.players:
                 if not p.alive:
                     continue
@@ -97,29 +102,28 @@ class MafiaGame:
                 try:
                     p.observe(self.get_game_status(p.id))
                     
-                    # 에이전트로부터 액션 받기 (내부적으로 변환됨)
-                    action_data = p.get_action()
+                    # 에이전트로부터 MafiaAction 받기
+                    action = p.get_action()
                     
-                    # Engine 포맷으로 변환 (reason 필드 완전 제외)
-                    engine_action: EngineAction = ActionTranslator.to_engine_action(action_data)
-                    action_type, target_id, role_value = engine_action
+                    if not isinstance(action, MafiaAction):
+                        print(f"[Engine] Warning: Player {p.id} returned non-MafiaAction: {type(action)}")
+                        continue
                     
-                    print(f"[Engine] Player {p.id} action: {engine_action}")
+                    print(f"[Engine] Player {p.id} action: {action}")
                     
-                    # 기권 처리
-                    if action_type == ActionType.NO_ACTION:
-                        ended = True
-                        break
+                    # PASS 카운트
+                    if action.action_type == ActionType.PASS:
+                        pass_count += 1
                     
-                    # 역할 주장 이벤트만 기록
-                    if action_type in (ActionType.CLAIM_ROLE, ActionType.CLAIM_WITH_TARGET):
+                    # CLAIM 이벤트만 기록
+                    if action.action_type == ActionType.CLAIM:
                         event = GameEvent(
                             day=self.day,
                             phase=self.phase,
                             event_type=EventType.CLAIM,
                             actor_id=p.id,
-                            target_id=target_id if action_type == ActionType.CLAIM_WITH_TARGET else None,
-                            value=role_value,
+                            target_id=action.target_id if action.target_id != -1 else None,
+                            value=action.claim_role,
                         )
                         
                         self.history.append(event)
@@ -128,9 +132,13 @@ class MafiaGame:
                 
                 except Exception as e:
                     print(f"[Engine] Error processing action for Player {p.id}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
             
-            if ended:
+            # 전원 침묵 시에만 토론 종료
+            if pass_count >= alive_count:
+                print(f"[Engine] Discussion ended: all {alive_count} players passed")
                 break
 
         # Phase End: observe만 호출 (내부에서 update_belief 수행)
@@ -139,19 +147,21 @@ class MafiaGame:
                 p.observe(self.get_game_status(p.id))
 
     def _process_vote(self):
-        """투표 단계 처리 - Engine API: EngineAction 튜플만 받음"""
+        """투표 단계 처리 - MafiaAction 기반"""
         votes = [0] * len(self.players)
         for p in self.players:
             if not p.alive:
                 continue
             p.observe(self.get_game_status(p.id))
             
-            # 에이전트로부터 액션 받기
-            action_data = p.get_action()
+            # 에이전트로부터 MafiaAction 받기
+            action = p.get_action()
             
-            # Engine 포맷으로 변환
-            engine_action: EngineAction = ActionTranslator.to_engine_action(action_data)
-            action_type, target_id, role_value = engine_action
+            if not isinstance(action, MafiaAction):
+                print(f"[Engine] Warning: Player {p.id} returned non-MafiaAction in vote")
+                continue
+            
+            target_id = action.target_id
             
             # 자기 자신 투표 방지
             if target_id == p.id:
@@ -183,7 +193,7 @@ class MafiaGame:
                 p.observe(self.get_game_status(p.id))
 
     def _process_execute(self):
-        """처형 단계 처리 - Engine API: EngineAction 튜플만 받음"""
+        """처형 단계 처리 - MafiaAction 기반"""
         if not self._last_votes:
             return
         
@@ -200,14 +210,17 @@ class MafiaGame:
                         continue
                     p.observe(self.get_game_status(p.id))
                     
-                    # 에이전트로부터 액션 받기
-                    action_data = p.get_action()
+                    # 에이전트로부터 MafiaAction 받기
+                    action = p.get_action()
                     
-                    # 처형 동의 여부 추출 (임시: dict에서 agree_execution 키)
-                    # TODO: 향후 EngineAction에 별도 타입 추가 고려
-                    if isinstance(action_data, dict):
-                        agree = action_data.get("agree_execution", 0)
+                    # 처형 동의 여부 확인 (임시: dict 호환성 유지)
+                    if isinstance(action, dict):
+                        agree = action.get("agree_execution", 0)
                         final_score += agree
+                    elif isinstance(action, MafiaAction):
+                        # MafiaAction의 경우 target_id가 처형 대상과 일치하면 동의로 간주
+                        if action.target_id == target_id:
+                            final_score += 1
                 
                 success = final_score > 0
                 if success:
@@ -247,7 +260,7 @@ class MafiaGame:
 
     def _process_night(self):
         """
-        밤 단계 처리 - Engine API: EngineAction 튜플만 받음
+        밤 단계 처리 - MafiaAction 기반
         역할별 로직을 매핑으로 분리하여 선언적 구조 유지
         """
         # 1. 역할별 행동 설정 매핑
@@ -266,12 +279,14 @@ class MafiaGame:
             
             p.observe(self.get_game_status(p.id))
             
-            # 에이전트로부터 액션 받기
-            action_data = p.get_action()
+            # 에이전트로부터 MafiaAction 받기
+            action = p.get_action()
             
-            # Engine 포맷으로 변환
-            engine_action: EngineAction = ActionTranslator.to_engine_action(action_data)
-            action_type, target_id, role_value = engine_action
+            if not isinstance(action, MafiaAction):
+                print(f"[Engine] Warning: Player {p.id} returned non-MafiaAction in night")
+                continue
+            
+            target_id = action.target_id
             
             # 유효한 타겟인지 확인
             if target_id != -1 and 0 <= target_id < len(self.players) and self.players[target_id].alive:
