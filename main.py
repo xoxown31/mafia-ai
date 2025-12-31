@@ -33,13 +33,34 @@ def run_simulation(args):
 
     print(f"Simulation started with {args.agent} agent.")
 
+    """ agent 개별 지정 부분 추후 구현 필요
+    with open(log_file_path, "w", encoding="utf-8") as f:
+        # 게임 인스턴스 생성 (로그 파일 연결)
+        game = MafiaGame(log_file=f)
+        
+        # 에피소드 반복 실행
+        episodes = getattr(args, "episodes", 1)
+        for ep in range(episodes):
+            f.write(f"\n{'='*20} Episode {ep+1} Start {'='*20}\n")
+            print(f"Running Episode {ep+1}/{episodes}...")
+            game.reset(args.others)
+            done = False
+            
+            while not done:
+                # 게임 진행 (내부 에이전트들의 행동으로 진행됨)
+                status, done, win = game.process_turn()
+            
+            f.write(f"Episode {ep+1} End. Win: {win}\n")
+            f.flush()"""
+
     # 1. 게임 실행 및 로그 기록
     with open(log_file_path, "w", encoding="utf-8") as f:
+        args.others = ["llm"] * 8  # 나머지 8명은 모두 LLM 에이전트로 고정
         # LLM 에이전트 모드
         if args.agent == "llm":
             print("Running LLM-only simulation.")
             game = MafiaGame(log_file=f)
-            game.reset()
+            game.reset(args.others)
             done = False
             while not done:
                 # LLM 에이전트는 내부적으로 스스로 행동을 결정하므로,
@@ -62,10 +83,10 @@ def run_simulation(args):
                 state_dim=state_dim,
                 action_dim=action_dim,
                 algorithm=args.agent,
-                backbone=getattr(args, 'backbone', 'mlp'),
-                use_il=getattr(args, 'use_il', False),
-                hidden_dim=getattr(args, 'hidden_dim', 128),
-                num_layers=getattr(args, 'num_layers', 2)
+                backbone=getattr(args, "backbone", "mlp"),
+                use_il=getattr(args, "use_il", False),
+                hidden_dim=getattr(args, "hidden_dim", 128),
+                num_layers=getattr(args, "num_layers", 2),
             )
 
             # 모드별 실행
@@ -83,7 +104,6 @@ def run_simulation(args):
             analyze_log_file(log_file_path, output_img="analysis_detailed.png")
         except Exception as e:
             print(f"Analysis failed: {e}")
-
     print("Simulation finished.")
 
 
@@ -113,25 +133,28 @@ def main():
         )
         parser.add_argument("--episodes", type=int, default=1000)
         parser.add_argument("--gui", action="store_true")
-        
+
         # RLAgent 설정
         parser.add_argument(
-            "--backbone", type=str, default="mlp", choices=["mlp", "lstm", "gru"],
-            help="Neural network backbone"
+            "--backbone",
+            type=str,
+            default="mlp",
+            choices=["mlp", "lstm", "gru"],
+            help="Neural network backbone",
         )
         parser.add_argument(
-            "--use_il", action="store_true",
-            help="Enable Imitation Learning"
+            "--use_il", action="store_true", help="Enable Imitation Learning"
         )
         parser.add_argument(
-            "--hidden_dim", type=int, default=128,
-            help="Hidden dimension for neural network"
+            "--hidden_dim",
+            type=int,
+            default=128,
+            help="Hidden dimension for neural network",
         )
         parser.add_argument(
-            "--num_layers", type=int, default=2,
-            help="Number of layers for RNN"
+            "--num_layers", type=int, default=2, help="Number of layers for RNN"
         )
-        
+
         args = parser.parse_args()
 
         if args.gui and GUI_AVAILABLE:

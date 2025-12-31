@@ -170,15 +170,6 @@ class Launcher(QWidget):
 
         mode = "train" if self.radio_train.isChecked() else "test"
 
-        # 추후에 에이전트 추가 시 수정 필요(개별 지정 위해)
-        # agents = []
-        # for i in range(8):
-        #     agents.append({
-        #         "id" : i,
-        #         "type" : self.agent_types,
-        #     }) 
-
-
         args = Namespace(
             agent=main_agent,  # 플레이어(Main)
             others=others_agents,  # 나머지 8명 리스트
