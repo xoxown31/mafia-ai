@@ -5,6 +5,7 @@ from config import config, Role, Phase, EventType
 from state import GameStatus, GameEvent, PlayerStatus
 from core.agent.llmAgent import LLMAgent
 
+
 class MafiaGame:
     def __init__(self, log_file=None):
         self.players: List[LLMAgent] = []
@@ -18,19 +19,18 @@ class MafiaGame:
             self.log_file.write(message + "\n")
             self.log_file.flush()
 
-
     def reset(self) -> GameStatus:
         self.day = 1
         self.phase = Phase.DAY_DISCUSSION
         self.history = []
         self.players = [LLMAgent(player_id=i) for i in range(config.game.PLAYER_COUNT)]
-        
+
         roles = config.game.DEFAULT_ROLES.copy()
         random.shuffle(roles)
         for p, r in zip(self.players, roles):
             p.role = r
             self._log(f"플레이어 {p.id}: {p.role.name}")
-        
+
         return self.get_game_status()
 
     def process_turn(self, action: int = -1) -> Tuple[GameStatus, bool, bool]:
@@ -58,30 +58,55 @@ class MafiaGame:
         return self.get_game_status(), is_over, is_win
 
     def _process_discussion(self):
+        self._log("토론 시작")
         for _ in range(2):
             ended = False
             for p in self.players:
-                if not p.alive: continue
+                if not p.alive:
+                    continue
                 p.observe(self.get_game_status(p.id))
                 resp = p.get_action()
+                print(resp, end="\n")
                 try:
                     data = json.loads(resp)
                     if data.get("discussion_status") == "End":
                         ended = True
                         break
-                    
+
                     role_id = data.get("role")
                     target_id = data.get("target_id")
-                    self._log(f"플레이어 {p.id}: {data.get('reason', '')}")
-                    
-                    self.history.append(GameEvent(
-                        day=self.day, phase=self.phase, event_type=EventType.CLAIM,
-                        actor_id=p.id, target_id=target_id, 
-                        value=Role(role_id) if role_id is not None else None
-                    ))
-                except: continue
-            if ended: break
-        
+                    reason = data.get("reason", "")
+                    claim = data.get("claim")
+                    role = p.role.name if role_id is None else Role(role_id).name
+
+                    if claim == 0:
+                        self._log(
+                            f"플레이어 {p.id} :  본인은 {role}이라고 주장. 이유: {reason}"
+                        )
+                    elif claim == 1:
+                        self._log(
+                            f"플레이어 {p.id} : {target_id}가 {role}이라고 주장. 이유: {reason}"
+                        )
+                    else:
+                        self._log(f"플레이어 {p.id} : 침묵 : {reason}")
+
+                    self.history.append(
+                        GameEvent(
+                            day=self.day,
+                            phase=self.phase,
+                            event_type=EventType.CLAIM,
+                            actor_id=p.id,
+                            target_id=target_id,
+                            value=Role(role_id) if role_id is not None else None,
+                        )
+                    )
+                except Exception as e:
+                    self._log(f"플레이어 {p.id} 액션 처리 중 에러 발생: {e}")
+                    self._log(f"  - 받은 응답 (resp): {resp}")
+                    continue
+            if ended:
+                break
+
         # Phase End: Update Beliefs
         for p in self.players:
             if p.alive:
@@ -91,18 +116,36 @@ class MafiaGame:
     def _process_vote(self):
         votes = [0] * len(self.players)
         for p in self.players:
-            if not p.alive: continue
+            if not p.alive:
+                continue
             p.observe(self.get_game_status(p.id))
             try:
                 data = json.loads(p.get_action())
+
                 target = data.get("target_id")
+                reason = data.get("reason", "")
+                self._log(f"플레이어 {p.id} 투표: {target}. 이유: {reason}")
+
                 if target is not None and target != -1:
                     votes[target] += 1
-                    self.history.append(GameEvent(
-                        day=self.day, phase=self.phase, event_type=EventType.VOTE,
-                        actor_id=p.id, target_id=target, value=None
-                    ))
-            except: continue
+                    self.history.append(
+                        GameEvent(
+                            day=self.day,
+                            phase=self.phase,
+                            event_type=EventType.VOTE,
+                            actor_id=p.id,
+                            target_id=target,
+                            value=None,
+                        )
+                    )
+            except Exception as e:
+                self._log(f"플레이어 {p.id} 투표 처리 중 에러 발생: {e}")
+                # Calling p.get_action() again might change state or trigger new LLM call,
+                # so log the error and don't try to re-fetch resp
+                continue
+
+        max_v = max(votes)
+        self._log(f"투표 결과: {votes}, 최다 득표 수: {max_v}")
         self._last_votes = votes
 
         # Phase End: Update Beliefs
@@ -119,25 +162,47 @@ class MafiaGame:
                 target_id = targets[0]
                 final_score = 0
                 for p in self.players:
-                    if not p.alive: continue
+                    if not p.alive:
+                        continue
                     p.observe(self.get_game_status(p.id))
                     try:
                         data = json.loads(p.get_action())
                         final_score += data.get("agree_execution", 0)
-                    except: continue
-                
+                        self._log(
+                            f"플레이어 {target_id} 처형 동의 여부: {data.get('agree_execution')}"
+                        )
+                    except Exception as e:
+                        self._log(f"플레이어 {p.id} 처형 동의 처리 중 에러 발생: {e}")
+                        # Calling p.get_action() again might change state or trigger new LLM call,
+                        # so log the error and don't try to re-fetch resp
+                        continue
+
                 success = final_score > 0
                 if success:
                     self.players[target_id].alive = False
-                    self._log(f"처형 성공: {target_id} ({self.players[target_id].role.name})")
-                    self.history.append(GameEvent(
-                        day=self.day, phase=self.phase, event_type=EventType.POLICE_RESULT,
-                        actor_id=-1, target_id=target_id, value=self.players[target_id].role
-                    ))
-                self.history.append(GameEvent(
-                    day=self.day, phase=self.phase, event_type=EventType.EXECUTE,
-                    actor_id=-1, target_id=target_id, value=success
-                ))
+                    self._log(
+                        f"처형 성공: {target_id} ({self.players[target_id].role.name})"
+                    )
+                    self.history.append(
+                        GameEvent(
+                            day=self.day,
+                            phase=self.phase,
+                            event_type=EventType.POLICE_RESULT,
+                            actor_id=-1,
+                            target_id=target_id,
+                            value=self.players[target_id].role,
+                        )
+                    )
+                self.history.append(
+                    GameEvent(
+                        day=self.day,
+                        phase=self.phase,
+                        event_type=EventType.EXECUTE,
+                        actor_id=-1,
+                        target_id=target_id,
+                        value=success,
+                    )
+                )
 
         # Phase End: Update Beliefs
         for p in self.players:
@@ -148,22 +213,52 @@ class MafiaGame:
     def _process_night(self):
         m_target, d_target, p_target = None, None, None
         for p in self.players:
-            if not p.alive or p.role == Role.CITIZEN: continue
+            if not p.alive or p.role == Role.CITIZEN:
+                continue
             p.observe(self.get_game_status(p.id))
             try:
                 data = json.loads(p.get_action())
                 target = data.get("target_id")
                 if target is not None and self.players[target].alive:
-                    if p.role == Role.MAFIA: 
+                    if p.role == Role.MAFIA:
                         m_target = target
-                        self.history.append(GameEvent(day=self.day, phase=self.phase, event_type=EventType.KILL, actor_id=p.id, target_id=target))
-                    elif p.role == Role.DOCTOR: 
+                        self._log(f"마피아 {p.id}의 살해 목표: {m_target}")
+                        self.history.append(
+                            GameEvent(
+                                day=self.day,
+                                phase=self.phase,
+                                event_type=EventType.KILL,
+                                actor_id=p.id,
+                                target_id=target,
+                            )
+                        )
+                    elif p.role == Role.DOCTOR:
                         d_target = target
-                        self.history.append(GameEvent(day=self.day, phase=self.phase, event_type=EventType.PROTECT, actor_id=p.id, target_id=target))
-                    elif p.role == Role.POLICE: 
+                        self._log(f"의사 {p.id}의 보호 목표: {d_target}")
+                        self.history.append(
+                            GameEvent(
+                                day=self.day,
+                                phase=self.phase,
+                                event_type=EventType.PROTECT,
+                                actor_id=p.id,
+                                target_id=target,
+                            )
+                        )
+                    elif p.role == Role.POLICE:
                         p_target = target
-                        self.history.append(GameEvent(day=self.day, phase=self.phase, event_type=EventType.POLICE_RESULT, actor_id=p.id, target_id=target, value=self.players[target].role))
-            except: continue
+                        self._log(f"경찰 {p.id}의 조사 목표: {p_target}")
+                        self.history.append(
+                            GameEvent(
+                                day=self.day,
+                                phase=self.phase,
+                                event_type=EventType.POLICE_RESULT,
+                                actor_id=p.id,
+                                target_id=target,
+                                value=self.players[target].role,
+                            )
+                        )
+            except:
+                continue
 
         if m_target is not None and m_target != d_target:
             self.players[m_target].alive = False
@@ -177,31 +272,64 @@ class MafiaGame:
 
     def get_game_status(self, viewer_id: Optional[int] = None) -> GameStatus:
         if viewer_id is None:
-            return GameStatus(day=self.day, phase=self.phase, my_id=-1, my_role=Role.CITIZEN,
-                              players=[PlayerStatus(id=p.id, alive=p.alive) for p in self.players],
-                              action_history=self.history)
-        
+            return GameStatus(
+                day=self.day,
+                phase=self.phase,
+                my_id=-1,
+                my_role=Role.CITIZEN,
+                players=[PlayerStatus(id=p.id, alive=p.alive) for p in self.players],
+                action_history=self.history,
+            )
+
         viewer = self.players[viewer_id]
         filtered = []
         if viewer.role == Role.MAFIA:
             for p in self.players:
                 if p.role == Role.MAFIA and p.id != viewer_id:
-                    filtered.append(GameEvent(day=0, phase=Phase.DAY_DISCUSSION, event_type=EventType.POLICE_RESULT, actor_id=-1, target_id=p.id, value=Role.MAFIA))
-        
+                    filtered.append(
+                        GameEvent(
+                            day=0,
+                            phase=Phase.DAY_DISCUSSION,
+                            event_type=EventType.POLICE_RESULT,
+                            actor_id=-1,
+                            target_id=p.id,
+                            value=Role.MAFIA,
+                        )
+                    )
+
         for e in self.history:
             if e.phase == Phase.NIGHT:
-                if e.actor_id == viewer_id or (viewer.role == Role.MAFIA and self.players[e.actor_id].role == Role.MAFIA) or (e.event_type == EventType.POLICE_RESULT and e.actor_id == viewer_id):
+                if (
+                    e.actor_id == viewer_id
+                    or (
+                        viewer.role == Role.MAFIA
+                        and self.players[e.actor_id].role == Role.MAFIA
+                    )
+                    or (
+                        e.event_type == EventType.POLICE_RESULT
+                        and e.actor_id == viewer_id
+                    )
+                ):
                     filtered.append(e)
-            else: filtered.append(e)
-            
-        return GameStatus(day=self.day, phase=self.phase, my_id=viewer_id, my_role=viewer.role,
-                          players=[PlayerStatus(id=p.id, alive=p.alive) for p in self.players],
-                          action_history=filtered)
+            else:
+                filtered.append(e)
+
+        return GameStatus(
+            day=self.day,
+            phase=self.phase,
+            my_id=viewer_id,
+            my_role=viewer.role,
+            players=[PlayerStatus(id=p.id, alive=p.alive) for p in self.players],
+            action_history=filtered,
+        )
 
     def check_game_over(self) -> Tuple[bool, bool]:
         m_count = sum(1 for p in self.players if p.role == Role.MAFIA and p.alive)
         c_count = sum(1 for p in self.players if p.role != Role.MAFIA and p.alive)
-        if self.day > config.game.MAX_DAYS: return True, False
-        if m_count == 0: return True, True
-        if m_count >= c_count: return True, False
+        if self.day > config.game.MAX_DAYS:
+            return True, False
+        if m_count == 0:
+            return True, True
+        if m_count >= c_count:
+            return True, False
         return False, False
