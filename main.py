@@ -119,37 +119,37 @@ def run_simulation(args):
         
         print(f"[{args.mode.upper()}] mode with player_configs.")
         
-        # Player 0 설정 추출
-        player0_config = player_configs[0]
+        # RL 에이전트 설정 확인 (다중 에이전트 지원)
+        rl_agent_configs = [(i, cfg) for i, cfg in enumerate(player_configs) if cfg['type'] == 'rl']
         
-        # Player 0이 RL인 경우 학습/테스트 진행
-        if player0_config['type'] == 'rl':
+        if rl_agent_configs:
             env = MafiaEnv()
             # PettingZoo API: observation_space(agent)
-            # All agents have same obs space
             agent_id = env.possible_agents[0]
             state_dim = env.observation_space(agent_id)["observation"].shape[0]
-            # action_dims is fixed to [9, 5] in MafiaEnv
-
-            agent = RLAgent(
-                player_id=0,
-                role=Role.CITIZEN,
-                state_dim=state_dim,
-                action_dims=[9, 5],
-                algorithm=player0_config['algo'],
-                backbone=player0_config['backbone'],
-                use_il=False,  # GUI에서는 기본적으로 IL 비활성화
-                hidden_dim=player0_config.get('hidden_dim', 128),
-                num_layers=player0_config.get('num_layers', 2),
-            )
+            
+            rl_agents = {}
+            for i, config in rl_agent_configs:
+                agent = RLAgent(
+                    player_id=i,
+                    role=Role.CITIZEN, # 역할은 게임 내에서 동적으로 할당됨
+                    state_dim=state_dim,
+                    action_dims=[9, 5],
+                    algorithm=config['algo'],
+                    backbone=config['backbone'],
+                    use_il=False,
+                    hidden_dim=config.get('hidden_dim', 128),
+                    num_layers=config.get('num_layers', 2),
+                )
+                rl_agents[i] = agent
 
             # 모드별 실행
             if args.mode == "train":
-                train(env, agent, args, logger)
+                train(env, rl_agents, args, logger)
             elif args.mode == "test":
-                test(env, agent, args)
+                test(env, rl_agents, args)
         
-        # Player 0이 LLM인 경우 또는 혼합 구성인 경우 - 풀 게임 시뮬레이션
+        # RL 에이전트가 없는 경우 (순수 LLM/Bot 시뮬레이션)
         else:
             print("Running full game simulation with mixed/LLM agents.")
             _run_full_game_simulation(player_configs, args, logger)
