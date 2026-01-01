@@ -4,6 +4,7 @@ import numpy as np
 import random
 from config import config, Role
 from state import GameStatus, GameEvent
+from state import GameAction
 
 
 # Softmax 유틸리티 함수
@@ -50,6 +51,6 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def get_action(self) -> 'EngineAction':
+    def get_action(self) -> GameAction:
         """주관적 추론(Hunch) 및 결정 - EngineAction 튜플 반환"""
         pass
