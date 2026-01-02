@@ -59,21 +59,20 @@ def run_simulation(args):
         
         # 모든 에이전트 생성 (RL 및 LLM)
         agents = {}
-        for i, config in enumerate(player_configs):
-            if config['type'] == 'rl':
+        for i, p_config in enumerate(player_configs):
+            if p_config['type'] == 'rl':
                 agent = RLAgent(
                     player_id=i,
                     role=Role.CITIZEN, # 역할은 게임 내에서 동적으로 할당됨
                     state_dim=state_dim,
                     action_dims=[9, 5],
-                    algorithm=config['algo'],
-                    backbone=config['backbone'],
-                    use_il=False,
-                    hidden_dim=config.get('hidden_dim', 128),
-                    num_layers=config.get('num_layers', 2),
+                    algorithm=p_config['algo'],
+                    backbone=p_config['backbone'],
+                    hidden_dim=p_config.get('hidden_dim', 128),
+                    num_layers=p_config.get('num_layers', 2),
                 )
                 agents[i] = agent
-            elif config['type'] == 'llm':
+            elif p_config['type'] == 'llm':
                 agent = LLMAgent(player_id=i, logger=logger)
                 agents[i] = agent
             else:

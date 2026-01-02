@@ -6,7 +6,6 @@ from typing import List, Optional, Tuple, Dict, Any
 from torch.distributions import Categorical
 
 from core.agent.baseAgent import BaseAgent
-from core.agent.llmAgent import LLMAgent
 from ai.model import DynamicActorCritic
 from ai.ppo import PPO
 from ai.reinforce import REINFORCE
@@ -16,7 +15,7 @@ from state import GameStatus, GameEvent, GameAction
 
 class RLAgent(BaseAgent):
     """
-    PPO, REINFORCE, IL, RNN을 모두 지원하는 통합 RL 에이전트
+    PPO, REINFORCE, RNN을 모두 지원하는 통합 RL 에이전트
     
     Multi-Discrete 액션 공간 지원: [Target, Role]
     
@@ -27,7 +26,6 @@ class RLAgent(BaseAgent):
         action_dims: Multi-Discrete 액션 차원 리스트 [9, 5]
         algorithm: "ppo" 또는 "reinforce"
         backbone: "lstm", "gru"
-        use_il: Imitation Learning 사용 여부
         hidden_dim: 은닉층 차원
         num_layers: RNN 레이어 수
     """
@@ -40,7 +38,6 @@ class RLAgent(BaseAgent):
         action_dims: List[int] = [9, 5],  # [Target, Role]
         algorithm: str = "ppo",
         backbone: str = "lstm",
-        use_il: bool = False,
         hidden_dim: int = 128,
         num_layers: int = 2,
     ):
@@ -48,7 +45,6 @@ class RLAgent(BaseAgent):
 
         self.algorithm = algorithm.lower()
         self.backbone = backbone.lower()
-        self.use_il = use_il
         self.state_dim = state_dim
         self.action_dims = action_dims
         self.action_dim = sum(action_dims)
@@ -70,11 +66,6 @@ class RLAgent(BaseAgent):
 
         self.hidden_state = None
         self.current_action = None  # 현재 액션 저장
-
-        self.expert_agent = None
-        if use_il:
-            self.expert_agent = LLMAgent(player_id, role)
-            self.il_buffer = []
 
     def reset_hidden(self):
         """에피소드 시작 시 RNN 은닉 상태 초기화"""
@@ -136,138 +127,7 @@ class RLAgent(BaseAgent):
     
     def update(self):
         """학습 수행 - 알고리즘 객체에 위임"""
-        if self.use_il and self.expert_agent is not None:
-            il_loss_fn = self._create_il_loss_fn()
-            self.learner.update(il_loss_fn=il_loss_fn)
-        else:
-            self.learner.update()
-
-    def _create_il_loss_fn(self):
-        """IL 손실 함수 생성 (최적화됨)"""
-
-        def compute_il_loss(states: torch.Tensor) -> torch.Tensor:
-            if len(self.il_buffer) == 0:
-                return torch.tensor(0.0)
-
-            # 텐서 생성 최적화: 리스트 컴프리헨션 대신 스택 사용
-            il_states_list = [s for s, _, _ in self.il_buffer]
-            il_actions_list = [a for _, a, _ in self.il_buffer]
-
-            if len(il_states_list) == 0:
-                return torch.tensor(0.0)
-
-            # 기존 텐서로 변환
-            il_states = torch.stack(
-                [torch.as_tensor(s, dtype=torch.float32) for s in il_states_list]
-            )
-            il_actions = torch.tensor(il_actions_list, dtype=torch.long)
-
-            # RNN 처리: 배치 유지
-            if self.backbone in ["lstm", "gru"]:
-                # 모든 샘플을 하나의 시퀀스로 처리
-                il_states = il_states.unsqueeze(0)
-                action_probs, _, _ = self.policy(il_states)
-                action_probs = action_probs.squeeze(0)
-            else:
-                action_probs, _, _ = self.policy(il_states)
-
-            # 마스크 처리 (선택적)
-            # 버퍼에 마스크 정보가 있다면 적용
-
-            criterion = nn.CrossEntropyLoss()
-            loss = criterion(action_probs, il_actions)
-
-            return loss
-
-        return compute_il_loss
-
-    def collect_expert_experience(self, state: np.ndarray, action_mask: np.ndarray):
-        """전문가(LLM) 행동 수집"""
-        if not self.use_il or self.expert_agent is None:
-            return None
-
-        self.expert_agent.observe(self.current_status)
-        expert_action_str = self.expert_agent.get_action()
-
-        try:
-            expert_action_data = json.loads(expert_action_str)
-            if "target_id" in expert_action_data:
-                expert_action = expert_action_data["target_id"]
-            elif "action" in expert_action_data:
-                expert_action = expert_action_data["action"]
-            else:
-                return None
-
-            if 0 <= expert_action < self.action_dim and action_mask[expert_action] == 1:
-                self.il_buffer.append((state, expert_action, action_mask))
-                if len(self.il_buffer) > 1000:
-                    self.il_buffer.pop(0)
-                return expert_action
-        except:
-            pass
-
-        return None
-
-    def pretrain_il(
-        self,
-        expert_trajectories: List[Tuple[np.ndarray, int, np.ndarray]],
-        num_epochs: int = 10,
-    ):
-        """
-        LLM 에이전트의 행동을 모방하는 사전 학습
-
-        Args:
-            expert_trajectories: [(state, action, mask), ...]
-            num_epochs: 사전 학습 에포크 수
-        """
-        if not self.use_il:
-            print("IL is not enabled for this agent")
-            return
-
-        criterion = nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(self.policy.parameters(), lr=config.train.LR)
-
-        for epoch in range(num_epochs):
-            total_loss = 0.0
-            correct = 0
-            total = 0
-
-            for state, expert_action, mask in expert_trajectories:
-                state_tensor = torch.FloatTensor(state).unsqueeze(0)
-                expert_action_tensor = torch.LongTensor([expert_action])
-
-                action_probs, _, _ = self.policy(state_tensor)
-
-                if mask is not None:
-                    mask_tensor = torch.FloatTensor(mask).unsqueeze(0)
-                    action_probs = action_probs * mask_tensor
-                    prob_sum = action_probs.sum(dim=-1, keepdim=True)
-                    action_probs = action_probs / (prob_sum + 1e-8)
-
-                loss = criterion(action_probs, expert_action_tensor)
-
-                optimizer.zero_grad()
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(
-                    self.policy.parameters(), config.train.MAX_GRAD_NORM
-                )
-                optimizer.step()
-
-                total_loss += loss.item()
-                pred = action_probs.argmax(dim=-1)
-                correct += (pred == expert_action_tensor).sum().item()
-                total += 1
-
-            avg_loss = total_loss / len(expert_trajectories)
-            accuracy = 100.0 * correct / total
-
-            if (epoch + 1) % 5 == 0:
-                print(
-                    f"IL Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%"
-                )
-
-        if self.algorithm == "ppo":
-            self.learner.policy_old.load_state_dict(self.policy.state_dict())
+        self.learner.update()
 
     def save(self, filepath: str):
         """모델 저장"""

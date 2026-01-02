@@ -366,9 +366,7 @@ class MafiaEnv(ParallelEnv):
         else: # Execute or Night
             phase_vec[2] = 1.0
             
-        # 3. 주관적 신뢰도 (32) -> 제거됨
-        
-        # 4. 직전 사건 (30)
+        # 3. 직전 사건 (30)
         # target_event가 있으면 그것을 사용, 없으면 history의 마지막 사용
         last_event = target_event
         if last_event is None and status.action_history:
@@ -420,7 +418,6 @@ class MafiaEnv(ParallelEnv):
             role_vec,    # 4
             day_vec,     # 1
             phase_vec,   # 3
-            # belief_vec,  # REMOVED
             actor_vec,   # 9
             target_vec,  # 9
             value_vec,   # 5
