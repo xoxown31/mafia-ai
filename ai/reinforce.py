@@ -14,7 +14,6 @@ class REINFORCE:
         self.log_probs = []
         self.rewards = []
         self.states = []
-        self.is_rnn = self.policy.backbone_type in ["lstm", "gru"]
 
     def select_action(self, state, hidden_state=None):
         if isinstance(state, dict):
@@ -24,22 +23,40 @@ class REINFORCE:
             obs = state
             mask = None
 
-        state_tensor = torch.FloatTensor(obs).unsqueeze(0)
-        mask_tensor = torch.FloatTensor(mask).unsqueeze(0) if mask is not None else None
+        state_tensor = torch.FloatTensor(obs).unsqueeze(0).unsqueeze(0)
         
-        probs, _, new_hidden = self.policy(state_tensor, hidden_state)
+        # logits_tuple: (type_logits, target_logits, role_logits)
+        logits_tuple, _, new_hidden = self.policy(state_tensor, hidden_state)
         
-        if mask_tensor is not None:
-            probs = probs * mask_tensor
-            total_prob = probs.sum(dim=-1, keepdim=True)
-            probs = probs / (total_prob + 1e-8)
+        target_logits, role_logits = logits_tuple
+        target_logits = target_logits.squeeze(0)
+        role_logits = role_logits.squeeze(0)
         
-        dist = Categorical(probs)
-        action = dist.sample()
-        self.log_probs.append(dist.log_prob(action))
+        # Masking
+        if mask is not None:
+            mask_tensor = torch.FloatTensor(mask)
+            mask_target = mask_tensor[:9]
+            mask_role = mask_tensor[9:]
+            
+            if mask_target.sum() > 0:
+                target_logits = target_logits.masked_fill(mask_target == 0, -1e9)
+            if mask_role.sum() > 0:
+                role_logits = role_logits.masked_fill(mask_role == 0, -1e9)
+        
+        dist_target = Categorical(logits=target_logits)
+        dist_role = Categorical(logits=role_logits)
+        
+        action_target = dist_target.sample()
+        action_role = dist_role.sample()
+        
+        log_prob = dist_target.log_prob(action_target) + dist_role.log_prob(action_role)
+        
+        action = [action_target.item(), action_role.item()]
+        
+        self.log_probs.append(log_prob)
         self.states.append(state_tensor.squeeze(0))
         
-        return action.item(), new_hidden
+        return action, new_hidden
 
     def update(self, il_loss_fn=None):
         if len(self.rewards) == 0:

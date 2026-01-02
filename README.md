@@ -15,13 +15,13 @@
 ## 🚀 최신 업데이트 (2025-12-25)
 
 ### v2.0 - 공정 정보 기반 학습 시스템
-- ✅ **관측 공간 확장**: 12차원 → 152차원
+- ✅ **관측 공간 확장**: 12차원 → 78차원
   - 발언 정보 (Claim Status)
   - 지목 관계 (Accusation Matrix)
   - 투표 기록 (Vote History)
   - 게임 상태 (Day, Phase)
   
-- ✅ **Deep MLP 모델**: 128→128→64 레이어 구조
+- ✅ **RNN(LSTM/GRU) 기반 시퀀스 모델**: 시계열 데이터 처리 최적화
 - ✅ **보상 체계 개선**: 승패 중심 (승리 +100, 패배 -50)
 - ✅ **학습 안정화**: Gradient Clipping, Dropout 적용
 
@@ -67,7 +67,7 @@ python main.py --mode test --agent ppo
 ## 📊 관측 공간 구조
 
 ```python
-Observation Space (152차원):
+Observation Space (78차원):
 ├── 생존 상태 (8)          # 각 플레이어 생존 여부
 ├── 내 역할 (4)            # One-hot encoding
 ├── 주장한 역할 (8)        # 플레이어별 역할 주장

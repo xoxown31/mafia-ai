@@ -218,9 +218,7 @@ class LLMAgent(BaseAgent):
         LLM 응답을 얻은 후 translate_to_engine()으로 변환합니다.
         """
         if not self.current_status:
-            return GameAction(
-                action_type=ActionType.PASS, target_id=-1, claim_role=None
-            )
+            return GameAction(target_id=-1, claim_role=None)
 
         phase_name = self.current_status.phase.name
         role_name = self.role.name

@@ -17,16 +17,16 @@ from state import GameStatus, GameEvent, GameAction
 class RLAgent(BaseAgent):
     """
     PPO, REINFORCE, IL, RNN을 모두 지원하는 통합 RL 에이전트
-
-    Multi-Discrete 액션 공간 지원: [Type, Target, Role]
-
+    
+    Multi-Discrete 액션 공간 지원: [Target, Role]
+    
     Args:
         player_id: 플레이어 ID
         role: 플레이어 역할
         state_dim: 상태 벡터 차원
-        action_dims: Multi-Discrete 액션 차원 리스트 [3, 9, 5]
+        action_dims: Multi-Discrete 액션 차원 리스트 [9, 5]
         algorithm: "ppo" 또는 "reinforce"
-        backbone: "mlp", "lstm", "gru"
+        backbone: "lstm", "gru"
         use_il: Imitation Learning 사용 여부
         hidden_dim: 은닉층 차원
         num_layers: RNN 레이어 수
@@ -37,9 +37,9 @@ class RLAgent(BaseAgent):
         player_id: int,
         role: Role,
         state_dim: int,
-        action_dims: List[int] = [3, 9, 5],  # [Type, Target, Role]
+        action_dims: List[int] = [9, 5],  # [Target, Role]
         algorithm: str = "ppo",
-        backbone: str = "mlp",
+        backbone: str = "lstm",
         use_il: bool = False,
         hidden_dim: int = 128,
         num_layers: int = 2,
@@ -51,13 +51,11 @@ class RLAgent(BaseAgent):
         self.use_il = use_il
         self.state_dim = state_dim
         self.action_dims = action_dims
-
-        # Multi-Discrete 지원을 위한 총 액션 수 계산
-        total_action_dim = sum(action_dims)  # 3 + 9 + 5 = 17
-
+        self.action_dim = sum(action_dims)
+        
         self.policy = DynamicActorCritic(
             state_dim=state_dim,
-            action_dim=total_action_dim,
+            action_dims=action_dims,
             backbone=backbone,
             hidden_dim=hidden_dim,
             num_layers=num_layers,
@@ -103,22 +101,18 @@ class RLAgent(BaseAgent):
             return self.current_action
 
         # 폴백: PASS 액션
-        from config import ActionType
-
-        return GameAction(action_type=ActionType.PASS, target_id=-1, claim_role=None)
-
-    def select_action_vector(
-        self, state, action_mask: Optional[np.ndarray] = None
-    ) -> List[int]:
+        return GameAction(target_id=-1, claim_role=None)
+    
+    def select_action_vector(self, state, action_mask: Optional[np.ndarray] = None) -> List[int]:
         """
         상태를 받아 Multi-Discrete 액션 벡터를 선택
 
         Args:
             state: 상태 벡터 또는 딕셔너리
-            action_mask: 유효한 행동 마스크 (3, 9, 5) 형태
+            action_mask: 유효한 행동 마스크 (9, 5) 형태
 
         Returns:
-            action_vector: [Type, Target, Role] 형태의 리스트
+            action_vector: [Target, Role] 형태의 리스트
         """
         if isinstance(state, dict):
             obs = state["observation"]
@@ -126,30 +120,24 @@ class RLAgent(BaseAgent):
         else:
             obs = state
             mask = action_mask
-
-        # TODO: Multi-Discrete 지원을 위한 learner 수정 필요
-        # 현재는 임시로 Discrete 방식 사용
-        state_dict = {"observation": obs, "action_mask": mask}
-        action_idx, self.hidden_state = self.learner.select_action(
-            state_dict, self.hidden_state
-        )
-
-        # 임시: action_idx를 Multi-Discrete 벡터로 변환
-        # Type (0~2), Target (0~8), Role (0~4) 순서로 분해
-        action_type = action_idx % 3
-        action_idx //= 3
-        target = action_idx % 9
-        action_idx //= 9
-        role = action_idx % 5
-
-        return [action_type, target, role]
-
+        
+        state_dict = {'observation': obs, 'action_mask': mask}
+        
+        # learner.select_action returns ([target, role], hidden_state)
+        action_vector, self.hidden_state = self.learner.select_action(state_dict, self.hidden_state)
+        
+        return action_vector
+    
     def store_reward(self, reward: float, is_terminal: bool = False):
-        """보상 저장"""
-        self.learner.rewards.append(reward)
-        if hasattr(self.learner, "buffer"):
+        """보상 저장: 알고리즘별 버퍼 위치 확인"""
+        if hasattr(self.learner, 'buffer'):
+            # PPO의 경우 buffer 객체 내의 리스트 사용
+            self.learner.buffer.rewards.append(reward)
             self.learner.buffer.is_terminals.append(is_terminal)
-
+        else:
+            # REINFORCE 등 buffer가 없는 경우 직접 저장
+            self.learner.rewards.append(reward)
+    
     def update(self):
         """학습 수행 - 알고리즘 객체에 위임"""
         if self.use_il and self.expert_agent is not None:

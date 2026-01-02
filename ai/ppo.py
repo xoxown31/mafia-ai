@@ -19,11 +19,14 @@ class PPO:
         self.buffer = RolloutBuffer()
         self.policy = policy
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.lr)
+        self.is_rnn = policy.backbone_type in ["lstm", "gru"]
         
         if policy_old is None:
+            # DynamicActorCritic ignores action_dim for heads (hardcoded 9, 5)
+            # So we can pass any value or the sum
             self.policy_old = DynamicActorCritic(
                 state_dim=policy.state_dim,
-                action_dim=policy.actor.out_features,
+                action_dims=policy.action_dims, 
                 backbone=policy.backbone_type,
                 hidden_dim=policy.hidden_dim,
                 num_layers=policy.num_layers
@@ -33,43 +36,69 @@ class PPO:
             self.policy_old = policy_old
             
         self.MseLoss = nn.MSELoss()
-        self.is_rnn = self.policy.backbone_type in ["lstm", "gru"]
 
     def select_action(self, state, hidden_state=None):
         if isinstance(state, dict):
             obs = state['observation']
-            mask = state['action_mask']
+            mask = state['action_mask']  # Shape: (14,)
         else:
             obs = state
             mask = None
             
         with torch.no_grad():
-            state_tensor = torch.FloatTensor(obs).unsqueeze(0)
-            mask_tensor = torch.FloatTensor(mask) if mask is not None else None
+            # obs: (78,) -> (1, 1, 78) for RNN (batch, seq, feature)
+            state_tensor = torch.FloatTensor(obs).unsqueeze(0).unsqueeze(0)
             
-            action_probs, _, new_hidden = self.policy_old(state_tensor, hidden_state)
-            action_probs = action_probs.squeeze(0)
+            # logits_tuple: (target_logits, role_logits)
+            logits_tuple, _, new_hidden = self.policy_old(state_tensor, hidden_state)
             
-            if mask_tensor is not None:
-                action_probs = action_probs * mask_tensor
-                action_probs_sum = action_probs.sum()
-                if action_probs_sum > 0:
-                    action_probs /= action_probs_sum
-                else:
-                    print("Warning: All actions masked out!")
-                    action_probs = mask_tensor / mask_tensor.sum()
+            # Unpack logits
+            target_logits, role_logits = logits_tuple
+            target_logits = target_logits.view(-1)
+            role_logits = role_logits.view(-1)
+            
+            # Apply Masking if available
+            if mask is not None:
+                mask_tensor = torch.FloatTensor(mask)
+                # mask shape: (14,) -> [Target(9), Role(5)]
+                mask_target = mask_tensor[:9]
+                mask_role = mask_tensor[9:]
+                
+                # Safety check: if all masked, ignore mask
+                if mask_target.sum() > 0:
+                    target_logits = target_logits.masked_fill(mask_target == 0, -1e9)
+                if mask_role.sum() > 0:
+                    role_logits = role_logits.masked_fill(mask_role == 0, -1e9)
 
-            dist = Categorical(action_probs)
-            action = dist.sample()
-            action_logprob = dist.log_prob(action)
+            # Create distributions
+            dist_target = Categorical(logits=target_logits)
+            dist_role = Categorical(logits=role_logits)
             
-        self.buffer.states.append(state_tensor.squeeze(0))
+            # Sample actions
+            action_target = dist_target.sample()
+            action_role = dist_role.sample()
+            
+            # Calculate log probs
+            logprob_target = dist_target.log_prob(action_target)
+            logprob_role = dist_role.log_prob(action_role)
+            
+            # Total log prob (sum of independent log probs)
+            action_logprob = logprob_target + logprob_role
+            
+            action = torch.stack([action_target, action_role])
+            
+        # Store in buffer
+        # For RNN, we store the state as (78,) and reconstruct sequences in update()
+        self.buffer.states.append(torch.FloatTensor(obs))
         self.buffer.actions.append(action)
         self.buffer.logprobs.append(action_logprob)
-        if self.is_rnn and new_hidden is not None:
-            self.buffer.hidden_states.append(new_hidden)
         
-        return action.item(), new_hidden
+        # Note: We don't store hidden_states in buffer for PPO update usually, 
+        # because we re-run the policy on the trajectory.
+        # But if we want to support truncated BPTT, we might need them.
+        # Here we assume full episode training or simple batching.
+        
+        return action.tolist(), new_hidden
 
     def update(self, il_loss_fn=None):
         if len(self.buffer.rewards) == 0:
@@ -84,73 +113,86 @@ class PPO:
             rewards.insert(0, discounted_reward)
             
         rewards = torch.tensor(rewards, dtype=torch.float32)
-        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
+        
+        if len(rewards) > 1 and rewards.std() > 1e-7:
+            rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
         
         old_states = torch.stack(self.buffer.states, dim=0).detach()
-        old_actions = torch.stack(self.buffer.actions, dim=0).detach()
+        old_actions = torch.stack(self.buffer.actions, dim=0).detach() # Shape: (N, 2)
         old_logprobs = torch.stack(self.buffer.logprobs, dim=0).detach()
         
+        if self.is_rnn:
+            # RNN: 에피소드 경계를 고려한 시퀀스 처리
+            ep_states_list = self._split_episodes(self.buffer.states, self.buffer.is_terminals)
+            ep_actions_list = self._split_episodes(self.buffer.actions, self.buffer.is_terminals)
+            ep_logprobs_list = self._split_episodes(self.buffer.logprobs, self.buffer.is_terminals)
+            ep_rewards_list = self._split_episodes(rewards, self.buffer.is_terminals)
+        else:
+            # Non-RNN case: treat as single episode or batch
+            ep_states_list = self._split_episodes(self.buffer.states, self.buffer.is_terminals)
+            ep_actions_list = self._split_episodes(self.buffer.actions, self.buffer.is_terminals)
+            ep_logprobs_list = self._split_episodes(self.buffer.logprobs, self.buffer.is_terminals)
+            ep_rewards_list = self._split_episodes(rewards, self.buffer.is_terminals)
+        
         for _ in range(self.k_epochs):
-            if self.is_rnn:
-                # RNN: 에피소드 경계를 고려한 시퀀스 처리
-                episodes = self._split_episodes(old_states, self.buffer.is_terminals)
-                all_action_probs = []
-                all_state_values = []
-                
-                for ep_states in episodes:
-                    if len(ep_states) == 0:
-                        continue
-                    ep_states_3d = ep_states.unsqueeze(0)
-                    action_probs, state_values, _ = self.policy(ep_states_3d)
-                    all_action_probs.append(action_probs.squeeze(0))
-                    all_state_values.append(state_values.squeeze(0))
-                
-                action_probs = torch.cat(all_action_probs, dim=0)
-                state_values = torch.cat(all_state_values, dim=0)
-            else:
-                action_probs, state_values, _ = self.policy(old_states)
-            
-            dist = Categorical(action_probs)
-            logprobs = dist.log_prob(old_actions)
-            dist_entropy = dist.entropy()
-            
-            state_values = torch.squeeze(state_values)
-            ratios = torch.exp(logprobs - old_logprobs)
-            
-            advantages = rewards - state_values.detach()
-            surr1 = ratios * advantages
-            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
-            
-            actor_loss = -torch.min(surr1, surr2)
-            value_loss = self.MseLoss(state_values, rewards)
-            entropy_loss = -dist_entropy
-            
-            loss = actor_loss + self.value_loss_coef * value_loss + self.entropy_coef * entropy_loss
-            
-            if il_loss_fn is not None:
-                il_loss = il_loss_fn(old_states)
-                loss = loss + config.train.IL_COEF * il_loss
-            
+            total_loss = 0
             self.optimizer.zero_grad()
-            loss.mean().backward()
-            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-            self.optimizer.step()
+            
+            for i in range(len(ep_states_list)):
+                ep_states = ep_states_list[i].unsqueeze(0)
+                ep_actions = ep_actions_list[i]
+                ep_old_logprobs = ep_logprobs_list[i]
+                ep_rewards = ep_rewards_list[i]
+                
+                # Forward pass (hidden state is reset for each episode)
+                logits_tuple, state_values, _ = self.policy(ep_states)
+                target_logits, role_logits = logits_tuple
+                
+                # Remove batch dim: (1, seq, dim) -> (seq, dim)
+                target_logits = target_logits.squeeze(0)
+                role_logits = role_logits.squeeze(0)
+                state_values = state_values.view(-1)
+                
+                dist_target = Categorical(logits=target_logits)
+                dist_role = Categorical(logits=role_logits)
+                
+                logprobs_target = dist_target.log_prob(ep_actions[:, 0])
+                logprobs_role = dist_role.log_prob(ep_actions[:, 1])
+                logprobs = logprobs_target + logprobs_role
+                
+                dist_entropy = dist_target.entropy() + dist_role.entropy()
+                
+                ratios = torch.exp(logprobs - ep_old_logprobs)
+                
+                advantages = ep_rewards - state_values.detach()
+                surr1 = ratios * advantages
+                surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+                
+                loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, ep_rewards) - self.entropy_coef * dist_entropy
+                total_loss += loss.mean()
+            
+            if len(ep_states_list) > 0:
+                avg_loss = total_loss / len(ep_states_list)
+                avg_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                self.optimizer.step()
             
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.buffer.clear()
     
-    def _split_episodes(self, states, is_terminals):
-        """에피소드 경계에 따라 상태를 분리"""
+    def _split_episodes(self, data_list, is_terminals):
+        """에피소드 경계에 따라 데이터를 분리"""
         episodes = []
         current_episode = []
         
-        for i, state in enumerate(states):
-            current_episode.append(state)
+        for i, data in enumerate(data_list):
+            current_episode.append(data)
             if is_terminals[i]:
                 if current_episode:
                     episodes.append(torch.stack(current_episode))
                 current_episode = []
         
+        # 마지막 에피소드가 끝나지 않았더라도 추가 (Truncated)
         if current_episode:
             episodes.append(torch.stack(current_episode))
         

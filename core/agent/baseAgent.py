@@ -3,8 +3,7 @@ from typing import List, Dict, Any
 import numpy as np
 import random
 from config import config, Role
-from state import GameStatus, GameEvent
-from state import GameAction
+from state import GameStatus, GameEvent, GameAction
 
 
 # Softmax 유틸리티 함수
