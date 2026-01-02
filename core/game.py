@@ -68,7 +68,22 @@ class MafiaGame:
         게임 턴 진행 - 외부에서 액션을 주입받지 않고 에이전트에게 직접 의사를 물음
         """
         is_over, is_win = self.check_game_over()
+        
+        # 게임 종료 시 이벤트 기록 (중복 방지)
         if is_over:
+            game_ended_before = any(e.phase == Phase.GAME_END for e in self.history)
+            if not game_ended_before:
+                event = GameEvent(
+                    day=self.day,
+                    phase=Phase.GAME_END,
+                    event_type=EventType.SYSTEM_MESSAGE,
+                    actor_id=-1,
+                    target_id=-1,
+                    value=is_win,  # 시민 승리 여부
+                )
+                self.history.append(event)
+                if self.logger:
+                    self.logger.log_event(event)
             return self.get_game_status(), is_over, is_win
 
         if self.phase == Phase.GAME_START:
@@ -88,6 +103,21 @@ class MafiaGame:
             self.day += 1
 
         is_over, is_win = self.check_game_over()
+        if is_over:
+            game_ended_before = any(e.phase == Phase.GAME_END for e in self.history)
+            if not game_ended_before:
+                event = GameEvent(
+                    day=self.day,
+                    phase=Phase.GAME_END,
+                    event_type=EventType.SYSTEM_MESSAGE,
+                    actor_id=-1,
+                    target_id=-1,
+                    value=is_win,  # 시민 승리 여부
+                )
+                self.history.append(event)
+                if self.logger:
+                    self.logger.log_event(event)
+        
         return self.get_game_status(), is_over, is_win
 
     def _process_discussion(self):
@@ -128,12 +158,22 @@ class MafiaGame:
             for player_id, action in actions:
                 print(f"[Engine] Player {player_id} action: {action}")
 
-                # PASS 카운트
+                # PASS 카운트 및 이벤트 로깅
                 if action.action_type == ActionType.PASS:
                     pass_count += 1
+                    event = GameEvent(
+                        day=self.day,
+                        phase=self.phase,
+                        event_type=EventType.CLAIM,  # PASS를 CLAIM(value=None)으로 기록
+                        actor_id=player_id,
+                        value=None,
+                    )
+                    self.history.append(event)
+                    if self.logger:
+                        self.logger.log_event(event)
 
                 # CLAIM 이벤트만 기록
-                if action.action_type == ActionType.CLAIM:
+                elif action.action_type == ActionType.CLAIM:
                     event = GameEvent(
                         day=self.day,
                         phase=self.phase,
@@ -143,6 +183,19 @@ class MafiaGame:
                         value=action.claim_role,
                     )
 
+                    self.history.append(event)
+                    if self.logger:
+                        self.logger.log_event(event)
+
+                elif action.action_type == ActionType.TARGET_ACTION:
+                    event = GameEvent(
+                        day=self.day,
+                        phase=self.phase,
+                        event_type=EventType.CLAIM,  # 토론 중 지목을 투표로 기록
+                        actor_id=player_id,
+                        target_id=action.target_id,
+                        value=None,
+                    )
                     self.history.append(event)
                     if self.logger:
                         self.logger.log_event(event)
@@ -187,25 +240,25 @@ class MafiaGame:
         for player_id, action in vote_actions:
             target_id = action.target_id
 
-            # 유효한 투표인지 확인
+            # 투표 이벤트는 기권(-1)을 포함하여 모두 기록
+            event = GameEvent(
+                day=self.day,
+                phase=self.phase,
+                event_type=EventType.VOTE,
+                actor_id=player_id,
+                target_id=target_id,
+            )
+            self.history.append(event)
+            if self.logger:
+                self.logger.log_event(event)
+
+            # 유효한 투표인지 확인 후 집계
             if (
                 target_id != -1
                 and 0 <= target_id < len(self.players)
                 and self.players[target_id].alive
             ):
                 votes[target_id] += 1
-
-                # 투표 이벤트 생성
-                event = GameEvent(
-                    day=self.day,
-                    phase=self.phase,
-                    event_type=EventType.VOTE,
-                    actor_id=player_id,
-                    target_id=target_id,
-                )
-                self.history.append(event)
-                if self.logger:
-                    self.logger.log_event(event)
 
         self._last_votes = votes
 
@@ -219,10 +272,9 @@ class MafiaGame:
         처형 단계 처리 - 동시성 구조
         최다 득표자에 대한 처형 동의를 동시에 받고 처리
         """
-        if not self._last_votes:
-            return
-
         max_v = max(self._last_votes)
+        execute_event = None
+
         if max_v > 0:
             targets = [i for i, v in enumerate(self._last_votes) if v == max_v]
             if len(targets) == 1:
@@ -233,29 +285,20 @@ class MafiaGame:
                 for p in self.players:
                     if not p.alive:
                         continue
-
-                    # 에이전트로부터 MafiaAction 받기
                     action = p.get_action()
-
                     execution_votes.append((p.id, action))
 
                 # Phase 2: 모든 동의를 한 번에 처리
                 final_score = 0
                 for player_id, action in execution_votes:
-                    # 처형 동의 여부 확인 (임시: dict 호환성 유지)
-                    if isinstance(action, dict):
-                        agree = action.get("agree_execution", 0)
-                        final_score += agree
-                    elif isinstance(action, GameAction):
-                        # MafiaAction의 경우 target_id가 처형 대상과 일치하면 동의로 간주
-                        if action.target_id == target_id:
-                            final_score += 1
+                    if isinstance(action, GameAction) and action.target_id == target_id:
+                        final_score += 1
 
                 success = final_score > 0
                 if success:
                     self.players[target_id].alive = False
 
-                # 처형 이벤트 생성 및 로깅
+                # 처형 시도 이벤트 생성
                 execute_event = GameEvent(
                     day=self.day,
                     phase=self.phase,
@@ -264,23 +307,36 @@ class MafiaGame:
                     target_id=target_id,
                     value=self.players[target_id].role if success else None,
                 )
-                self.history.append(execute_event)
-                if self.logger:
-                    self.logger.log_event(execute_event)
+            else:
+                # 동점으로 처형 무산
+                execute_event = GameEvent(
+                    day=self.day, phase=self.phase, event_type=EventType.EXECUTE, actor_id=-1, target_id=-1
+                )
+        else:
+            # 득표자가 없어 처형 무산
+            execute_event = GameEvent(
+                day=self.day, phase=self.phase, event_type=EventType.EXECUTE, actor_id=-1, target_id=-1
+            )
 
-                # 경찰 결과 이벤트 (처형 성공 시 역할 공개)
-                if success:
-                    police_result_event = GameEvent(
-                        day=self.day,
-                        phase=self.phase,
-                        event_type=EventType.SYSTEM_MESSAGE,
-                        actor_id=-1,
-                        target_id=target_id,
-                        value=self.players[target_id].role,
-                    )
-                    self.history.append(police_result_event)
-                    if self.logger:
-                        self.logger.log_event(police_result_event)
+        # 이벤트 기록
+        if execute_event:
+            self.history.append(execute_event)
+            if self.logger:
+                self.logger.log_event(execute_event)
+
+            # 처형 성공 시에만 역할 공개 이벤트 추가
+            if execute_event.target_id != -1 and self.players[execute_event.target_id].alive is False:
+                role_reveal_event = GameEvent(
+                    day=self.day,
+                    phase=self.phase,
+                    event_type=EventType.SYSTEM_MESSAGE,
+                    actor_id=-1,
+                    target_id=execute_event.target_id,
+                    value=self.players[execute_event.target_id].role,
+                )
+                self.history.append(role_reveal_event)
+                if self.logger:
+                    self.logger.log_event(role_reveal_event)
 
         # Phase 3: 결과를 모두에게 공개
         for p in self.players:
@@ -324,36 +380,68 @@ class MafiaGame:
         for player_id, role, action in night_actions:
             target_id = action.target_id
 
-            # 유효한 타겟인지 확인
-            if (
-                target_id != -1
-                and 0 <= target_id < len(self.players)
-                and self.players[target_id].alive
-            ):
-                # 역할별 설정 가져오기
-                config = role_config.get(role)
-                if not config:
-                    continue
+            # 유효한 타겟인지 확인 및 보정
+            is_invalid_target = (
+                target_id is None
+                or not (0 <= target_id < len(self.players))
+                or not self.players[target_id].alive
+            )
 
-                # 타겟 저장 (살해/보호 판정용)
-                night_targets[role] = target_id
+            # 역할별 제약조건 추가
+            if not is_invalid_target:
+                if role == Role.MAFIA and self.players[target_id].role == Role.MAFIA:
+                    is_invalid_target = True
+                elif role == Role.POLICE and target_id == player_id:
+                    is_invalid_target = True
 
-                # 이벤트 생성
-                event_value = None
-                if config["value"] == "role_of_target":
-                    event_value = self.players[target_id].role
-
-                event = GameEvent(
-                    day=self.day,
-                    phase=self.phase,
-                    event_type=config["event_type"],
-                    actor_id=player_id,
-                    target_id=target_id,
-                    value=event_value,
+            if is_invalid_target:
+                print(
+                    f"[Engine] Player {player_id} ({role.name}) returned invalid night target {target_id}. Assigning a random valid target."
                 )
-                self.history.append(event)
-                if self.logger:
-                    self.logger.log_event(event)
+
+                # 역할별 유효 타겟 후보 선정
+                valid_targets = []
+                if role == Role.MAFIA:
+                    valid_targets = [
+                        p.id for p in self.players if p.alive and p.role != Role.MAFIA
+                    ]
+                elif role == Role.POLICE:
+                    valid_targets = [
+                        p.id for p in self.players if p.alive and p.id != player_id
+                    ]
+                elif role == Role.DOCTOR:
+                    valid_targets = [p.id for p in self.players if p.alive]
+
+                if valid_targets:
+                    target_id = random.choice(valid_targets)
+                    print(f"[Engine] Player {player_id} new target is {target_id}.")
+                else:
+                    continue  # 마땅한 타겟이 없으면 스킵
+
+            # 역할별 설정 가져오기
+            role_config_item = role_config.get(role)
+            if not role_config_item:
+                continue
+
+            # 타겟 저장 (살해/보호 판정용)
+            night_targets[role] = target_id
+
+            # 이벤트 생성
+            event_value = None
+            if role_config_item["value"] == "role_of_target":
+                event_value = self.players[target_id].role
+
+            event = GameEvent(
+                day=self.day,
+                phase=self.phase,
+                event_type=role_config_item["event_type"],
+                actor_id=player_id,
+                target_id=target_id,
+                value=event_value,
+            )
+            self.history.append(event)
+            if self.logger:
+                self.logger.log_event(event)
 
         # Phase 3: 살해 및 보호 처리 (동시 발생)
         mafia_target = night_targets.get(Role.MAFIA)

@@ -52,6 +52,7 @@ class LLMAgent(BaseAgent):
             Phase.DAY_VOTE: "투표",
             Phase.DAY_EXECUTE: "처형 여부 결정",
             Phase.NIGHT: "밤",
+            Phase.GAME_END: "게임 종료",
         }
         return phase_map.get(phase, phase.name)
 
@@ -66,43 +67,10 @@ class LLMAgent(BaseAgent):
         return dict(sorted(grouped.items()))
 
     def _format_event(self, event: GameEvent) -> str:
-        """GameEvent를 자연어 문장으로 변환"""
-        event_type = event.event_type
-        actor = f"Player {event.actor_id}" if event.actor_id != -1 else "시스템"
-        target = f"Player {event.target_id}" if event.target_id != -1 else "없음"
-
-        if event_type == EventType.CLAIM:
-            role_name = (
-                Role(event.value).name if event.value is not None else "알 수 없음"
-            )
-            if event.actor_id == event.target_id:
-                return f"{actor}가 자신이 {role_name}이라고 주장했습니다."
-            else:
-                return f"{actor}가 {target}을(를) {role_name}(이)라고 주장했습니다."
-
-        elif event_type == EventType.VOTE:
-            return f"{actor}가 {target}에게 투표했습니다."
-
-        elif event_type == EventType.EXECUTE:
-            role_name = (
-                Role(event.value).name if event.value is not None else "알 수 없음"
-            )
-            return f"{target}({role_name})이(가) 처형되었습니다."
-
-        elif event_type == EventType.KILL:
-            return f"{actor}가 {target}을(를) 살해 대상으로 지목했습니다."
-
-        elif event_type == EventType.PROTECT:
-            return f"{actor}가 {target}을(를) 보호했습니다."
-
-        elif event_type == EventType.POLICE_RESULT:
-            role_name = (
-                Role(event.value).name if event.value is not None else "알 수 없음"
-            )
-            return f"{actor}가 {target}을(를) 조사한 결과 {role_name}입니다."
-
-        else:
-            return f"알 수 없는 이벤트: {event_type.name}"
+        """GameEvent를 logger.py의 interpret_event를 사용하여 자연어 문장으로 변환"""
+        if self.logger:
+            return self.logger.interpret_event(event)
+        return f"LogManager not available to interpret event: {event}"
 
     def _format_game_status(self) -> str:
         """
@@ -290,23 +258,38 @@ class LLMAgent(BaseAgent):
         final_system_msg = f"{role_specific_system_msg}\n{json_instruction}"
 
         user_template = prompt_data.get("user", "")
-        conversation_log = self._create_conversation_log()
+        terminal_status_output = self._format_game_status()
+        print(
+            f"--- [Player {self.id}] Status for Terminal ---\n{terminal_status_output}\n-------------------------"
+        )
 
-        # 신뢰도 행렬을 마크다운 테이블로 변환
+        conversation_log_for_llm = self._create_conversation_log()
         belief_markdown = self._belief_to_markdown()
 
-        # 게임 상태를 읽기 쉬운 형태로 변환
-        formatted_status = self._format_game_status()
+        llm_status_lines = []
+        llm_status_lines.append(
+            f"- Day {self.current_status.day}, {self._phase_to_korean(self.current_status.phase)}"
+        )
+        alive_players = [p.id for p in self.current_status.players if p.alive]
+        dead_players = [p.id for p in self.current_status.players if not p.alive]
+        llm_status_lines.append(
+            f"- 생존자: {', '.join(f'Player {pid}' for pid in alive_players)}"
+        )
+        if dead_players:
+            llm_status_lines.append(
+                f"- 사망자: {', '.join(f'Player {pid}' for pid in dead_players)}"
+            )
 
-        game_data = self.game_data_block.format(
+        game_data_for_llm = self.game_data_block.format(
             role_name=self.role.name,
             id=self.id,
-            game_status=formatted_status,
+            game_status="\n".join(llm_status_lines),
             belief_matrix=belief_markdown,
-            conversation_log=conversation_log,
+            conversation_log=conversation_log_for_llm,
         )
-        print(f"[Player {self.id}] Game Data for LLM:\n{game_data}\n")
-        final_user_msg = user_template.format(game_data=game_data)
+
+        final_user_msg = user_template.format(game_data=game_data_for_llm)
+
         print(
             f"[Player {self.id}] Final System Msg:\n{final_system_msg}\n Final User Msg:\n{final_user_msg}\n"
         )
@@ -340,23 +323,18 @@ class LLMAgent(BaseAgent):
 
     def _create_conversation_log(self) -> str:
         """
-        대화 기록을 생성합니다.
+        게임의 모든 공개 이벤트를 요약하여 대화 및 행동 기록을 생성합니다.
         LogManager의 interpret_event()를 사용하여 일관된 내러티브를 생성합니다.
         """
-        if self.current_status.phase != Phase.DAY_DISCUSSION:
-            return "토론 단계가 아님"
-
         if not self.logger:
             return "LogManager가 설정되지 않아 기록을 표시할 수 없습니다."
 
         # LogManager를 통한 통합 해석 (중복 제거)
         log_lines = [
-            self.logger.interpret_event(e)
-            for e in self.current_status.action_history
-            if e.event_type == EventType.CLAIM
+            self.logger.interpret_event(e) for e in self.current_status.action_history
         ]
 
-        return "\n".join(log_lines) if log_lines else "아직 아무도 주장하지 않았습니다."
+        return "\n".join(log_lines) if log_lines else "아직 기록된 행동이 없습니다."
 
     def _belief_to_markdown(self) -> str:
         """

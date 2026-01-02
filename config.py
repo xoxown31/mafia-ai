@@ -17,6 +17,7 @@ class Phase(IntEnum):
     DAY_EXECUTE = 2
     NIGHT = 3
     GAME_START = 4
+    GAME_END = 5
 
 
 class ActionType(IntEnum):
@@ -31,7 +32,7 @@ class EventType(IntEnum):
     """게임 이벤트 타입 - 엔진의 기록"""
 
     SYSTEM_MESSAGE = 0  # 시스템 메시지
-    CLAIM = 1  # 역할 주장
+    CLAIM = 1  # 주장
     VOTE = 2  # 투표
     POLICE_RESULT = 3  # 경찰 조사 결과
     KILL = 4  # 마피아 킬

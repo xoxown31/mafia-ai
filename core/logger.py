@@ -72,7 +72,9 @@ class LogManager:
             "CLAIM_SELF": "Day {day} | Player {actor_id}는 자신이 {role_name}라고 주장했습니다.",
             "CLAIM_OTHER": "Day {day} | Player {actor_id}는 Player {target_id}가 {role_name}라고 주장했습니다.",
             "VOTE": "Day {day} | Player {actor_id}가 Player {target_id}에게 투표했습니다.",
+            "ABSTAIN": "Day {day} | Player {actor_id}는 기권하였습니다.",
             "EXECUTE": "Day {day} | Player {target_id}가 처형되었습니다. (역할: {role_name})",
+            "CANCEL": "Day {day} | 처형이 부결되었습니다.",
             "KILL": "Night {day} | Player {target_id}가 마피아에게 살해당했습니다.",
             "PROTECT": "Night {day} | 의사가 Player {target_id}를 보호했습니다.",
             "POLICE_RESULT": "Night {day} | 경찰이 Player {target_id}를 조사: {role_name}",
@@ -133,11 +135,13 @@ class LogManager:
             자연어 문장
         """
 
+        if event.phase == Phase.GAME_END:
+            result = "시민 팀 승리!" if event.value else "마피아 팀 승리!"
+            return f"게임 종료 {result}"
+
         # 1. 이벤트 타입과 템플릿 키 매핑
         type_to_key = {
             EventType.SYSTEM_MESSAGE: "SYSTEM_MESSAGE",
-            EventType.VOTE: "VOTE",
-            EventType.EXECUTE: "EXECUTE",
             EventType.KILL: "KILL",
             EventType.PROTECT: "PROTECT",
             EventType.POLICE_RESULT: "POLICE_RESULT",
@@ -153,6 +157,16 @@ class LogManager:
                 template_key = "CLAIM_SELF"
             else:
                 template_key = "CLAIM_OTHER"
+        if event.event_type == EventType.VOTE:
+            if event.target_id == -1 or event.target_id is None:
+                template_key = "ABSTAIN"
+            else:
+                template_key = "VOTE"
+        if event.event_type == EventType.EXECUTE:
+            if event.target_id == -1:
+                template_key = "CANCEL"
+            else:
+                template_key = "EXECUTE"
 
         if not template_key:
             return f"[Unknown Event] {event.event_type}"
