@@ -24,10 +24,11 @@ class LogManager:
     """게임 이벤트 로깅 및 해석 매니저"""
 
     def __init__(
-        self, 
-        experiment_name: str, 
-        log_dir: str = "./logs", 
-        use_tensorboard: bool = True
+        self,
+        experiment_name: str,
+        log_dir: str = "./logs",
+        use_tensorboard: bool = True,
+        write_mode: bool = True,
     ):
         """
         Args:
@@ -38,34 +39,35 @@ class LogManager:
         self.experiment_name = experiment_name
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.use_tensorboard = use_tensorboard
+        self.use_tensorboard = use_tensorboard and write_mode
 
-        # 타임스탬프 기반 고유 디렉토리 생성
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.session_dir = self.log_dir / f"{experiment_name}_{timestamp}"
-        self.session_dir.mkdir(parents=True, exist_ok=True)
-
-        # JSONL 로그 파일 경로
-        self.jsonl_path = self.session_dir / "events.jsonl"
-        self.jsonl_file = open(self.jsonl_path, "w", encoding="utf-8")
-
-        # TensorBoard writer (조건부 생성)
-        self.writer = None
-        if use_tensorboard:
-            tensorboard_dir = self.session_dir / "tensorboard"
-            self.writer = SummaryWriter(log_dir=str(tensorboard_dir))
-            print(f"  - TensorBoard: {tensorboard_dir}")
-
-        # 내러티브 템플릿 로드
         self.narrative_templates = self._load_narrative_templates()
 
-        print(f"[LogManager] Initialized: {self.session_dir}")
-        print(f"  - JSONL: {self.jsonl_path}")
+        if write_mode:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.session_dir = self.log_dir / f"{experiment_name}_{timestamp}"
+            self.session_dir.mkdir(parents=True, exist_ok=True)
+
+            self.jsonl_path = self.session_dir / "events.jsonl"
+            self.jsonl_file = open(self.jsonl_path, "w", encoding="utf-8")
+
+            self.writer = None
+            if self.use_tensorboard:
+                tensorboard_dir = self.session_dir / "tensorboard"
+                self.writer = SummaryWriter(log_dir=str(tensorboard_dir))
+                print(f"  - TensorBoard: {tensorboard_dir}")
+
+            print(f"[LogManager] Initialized: {self.session_dir}")
+        else:
+            self.session_dir = None
+            self.jsonl_file = None
+            self.writer = None
 
     def _load_narrative_templates(self) -> Dict[str, str]:
         """YAML에서 내러티브 템플릿 로드"""
         template_path = Path(__file__).parent / "narrative_templates.yaml"
-        
+
         # 기본 템플릿
         default_templates = {
             "CLAIM_SELF": "Day {day} | Player {actor_id}는 자신이 {role_name}라고 주장했습니다.",
@@ -107,7 +109,7 @@ class LogManager:
         """TensorBoard에 학습 메트릭 기록 (TensorBoard 사용 시에만)"""
         if not self.use_tensorboard or self.writer is None:
             return
-        
+
         self.writer.add_scalar("Reward/Total", total_reward, episode)
         self.writer.add_scalar("Win/IsWin", 1 if is_win else 0, episode)
 
@@ -121,13 +123,13 @@ class LogManager:
     def interpret_event(self, event: GameEvent) -> str:
         """
         GameEvent를 자연어 문장으로 변환 (데이터 주도 방식)
-        
+
         이 메서드는 GUI 리플레이와 LLM 에이전트의 프롬프트 생성에 사용됩니다.
         로그 파일에는 저장되지 않습니다.
-        
+
         Args:
             event: 해석할 게임 이벤트
-            
+
         Returns:
             자연어 문장
         """
@@ -139,10 +141,10 @@ class LogManager:
             EventType.PROTECT: "PROTECT",
             EventType.POLICE_RESULT: "POLICE_RESULT",
         }
-        
+
         # 2. 특수 로직이 필요한 CLAIM 처리
         template_key = type_to_key.get(event.event_type)
-        
+
         if event.event_type == EventType.CLAIM:
             if event.value is None:
                 template_key = "SILENCE"
@@ -150,22 +152,26 @@ class LogManager:
                 template_key = "CLAIM_SELF"
             else:
                 template_key = "CLAIM_OTHER"
-        
+
         if not template_key:
             return f"[Unknown Event] {event.event_type}"
-        
+
         # 3. 템플릿 가져오기 및 포맷팅
         template = self.narrative_templates.get(template_key, "")
         if not template:
             return f"[No Template] {template_key}"
-        
-        role_name = self._get_role_korean_name(event.value) if isinstance(event.value, Role) else ""
-        
+
+        role_name = (
+            self._get_role_korean_name(event.value)
+            if isinstance(event.value, Role)
+            else ""
+        )
+
         return template.format(
             day=event.day,
             actor_id=event.actor_id,
             target_id=event.target_id if event.target_id is not None else -1,
-            role_name=role_name
+            role_name=role_name,
         )
 
     @staticmethod

@@ -1,0 +1,74 @@
+/* gui/styles.qss */
+
+QWidget {
+    background-color: #2b2b2b;
+    color: #ffffff;
+    font-family: 'Segoe UI', 'Malgun Gothic', sans-serif;
+    font-size: 14px;
+}
+
+/*에이전트 주입 box 스타일*/
+QGroupBox {
+    border: 1px solid #555;
+    border-radius: 6px;
+    margin-top: 22px;
+    font-weight: bold;
+    background-color: #333333;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 5px;
+    color: #4CAF50;
+}
+
+/*버튼 스타일*/
+QPushButton {
+    background-color: #444;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 6px;
+}
+
+QPushButton:hover {
+    background-color: #555;
+    border: 1px solid #4CAF50;
+}
+
+QPushButton:checked {
+    background-color: #4CAF50;
+    color: white;
+}
+
+/*중지 버튼 스타일*/
+QPushButton#StopBtn {
+    background-color: #444;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 6px;
+}
+
+QPushButton#StopBtn:hover {
+    background-color: #333; 
+    border: 1px solid #ff0000;
+}
+
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #222;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 4px;
+    color: white;
+    selection-background-color: #4CAF50;
+}
+
+QComboBox::drop-down {
+    border: 0px;
+}
+
+QScrollArea {
+    border: none;
+    background-color: transparent;
+}
+
