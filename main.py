@@ -57,7 +57,9 @@ def run_simulation(args):
         # 환경 초기화 (PettingZoo)
         env = MafiaEnv(logger=logger)
         agent_id = env.possible_agents[0]
-        state_dim = env.observation_space(agent_id)["observation"].shape[0]
+        # state_dim = env.observation_space(agent_id)["observation"].shape[0]
+        # 78차원으로 고정
+        state_dim = 78
         
         # 모든 에이전트 생성 (RL 및 LLM)
         agents = {}

@@ -39,7 +39,7 @@ class RLAgent(BaseAgent):
         state_dim: int,
         action_dims: List[int] = [9, 5],  # [Target, Role]
         algorithm: str = "ppo",
-        backbone: str = "mlp",
+        backbone: str = "lstm",
         use_il: bool = False,
         hidden_dim: int = 128,
         num_layers: int = 2
@@ -53,7 +53,7 @@ class RLAgent(BaseAgent):
         self.action_dims = action_dims
         
         # Multi-Discrete 지원을 위한 총 액션 수 계산
-        total_action_dim = sum(action_dims)  # 3 + 9 + 5 = 17
+        total_action_dim = sum(action_dims)  # 9 + 5 = 14
         
         self.policy = DynamicActorCritic(
             state_dim=state_dim,
@@ -111,10 +111,10 @@ class RLAgent(BaseAgent):
         
         Args:
             state: 상태 벡터 또는 딕셔너리
-            action_mask: 유효한 행동 마스크 (3, 9, 5) 형태
+            action_mask: 유효한 행동 마스크 (14,) 형태
         
         Returns:
-            action_vector: [Type, Target, Role] 형태의 리스트
+            action_vector: [Target, Role] 형태의 리스트
         """
         if isinstance(state, dict):
             obs = state['observation']
@@ -125,7 +125,7 @@ class RLAgent(BaseAgent):
         
         state_dict = {'observation': obs, 'action_mask': mask}
         
-        # learner.select_action returns ([type, target, role], hidden_state)
+        # learner.select_action returns ([target, role], hidden_state)
         action_vector, self.hidden_state = self.learner.select_action(state_dict, self.hidden_state)
         
         return action_vector

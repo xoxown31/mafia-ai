@@ -88,14 +88,23 @@ class MafiaGame:
         """
         alive_count = sum(1 for p in self.players if p.alive)
         
-        # Phase 2: 모든 행동을 한 번에 처리 (이벤트 생성)
+        # 순차적 반영: 8명의 액션을 루프를 돌며 하나씩 적용
+        # actions 딕셔너리는 {player_id: action} 형태
+        # 순서는 player_id 순으로 하거나 랜덤으로 할 수 있음. 여기서는 ID 순으로 처리.
+        sorted_actions = sorted(actions.items(), key=lambda x: x[0])
+        
         pass_count = 0
-        for player_id, action in actions.items():
+        
+        for player_id, action in sorted_actions:
+            player = self.players[player_id]
+            if not player.alive:
+                continue
+                
             # PASS 카운트
             if action.target_id == -1 and action.claim_role is None:
                 pass_count += 1
             
-            # CLAIM 이벤트만 기록
+            # CLAIM 이벤트 생성 및 기록
             if action.claim_role is not None:
                 event = GameEvent(
                     day=self.day,
@@ -103,23 +112,41 @@ class MafiaGame:
                     event_type=EventType.CLAIM,
                     actor_id=player_id,
                     target_id=action.target_id if action.target_id != -1 else None,
-                    value=action.claim_role,
+                    value=action.claim_role
                 )
-                
                 self.history.append(event)
                 if self.logger:
                     self.logger.log_event(event)
-        
-        # Phase 3: 결과를 모두에게 공개
-        for p in self.players:
-            if p.alive:
-                p.observe(self.get_game_status(p.id))
-        
+                    
+                # 에이전트들에게 즉시 알림 (순차적 반영의 핵심)
+                # 하지만 현재 구조상 step_phase가 끝나야 env.step이 반환되고, 
+                # 그제서야 에이전트들이 다음 observation을 받음.
+                # RL 에이전트가 "이벤트 시퀀스를 하나씩 훑으며" 학습하려면,
+                # 여기서 발생한 이벤트를 모아서 env가 반환할 때 시퀀스로 줘야 함.
+                # 하지만 현재 env 구조는 step마다 하나의 observation만 반환함.
+                # 따라서, env.step() 내에서 여러 번의 model forward가 일어나지 않음.
+                # 
+                # 요구사항: "각 액션이 적용될 때마다 발생하는 GameEvent를 리스트로 수집하여, 
+                # RL 에이전트가 이 시퀀스를 하나씩 훑으며 RNN의 Hidden State를 갱신할 수 있게 한다."
+                # 
+                # 이를 위해서는 env.step()이 반환하는 observation에 'events' 리스트가 포함되어야 하고,
+                # RL 에이전트(PPO)는 이 리스트를 순회하며 hidden state를 업데이트해야 함.
+                # 현재 env._encode_observation은 가장 최근 이벤트 하나만 반영함.
+                # 
+                # 해결책:
+                # 1. GameStatus에 'new_events' 필드를 추가하여 이번 step에서 발생한 모든 이벤트를 담음.
+                # 2. env._encode_observation에서 이 'new_events'를 인코딩하여 반환?
+                #    -> 78차원 벡터는 단일 시점의 상태임.
+                #    -> RNN은 시퀀스 입력을 받을 수 있음.
+                #    -> env.step()에서 반환하는 observation을 [seq_len, 78] 형태로 만들어서 반환하면 됨.
+                #    -> 즉, 이번 턴에 발생한 이벤트 N개에 대해 각각 78차원 벡터를 생성하여 리스트로 반환.
+                
+        # 모든 액션 처리 후 종료 조건 확인
+        if pass_count >= alive_count * 0.5:  # 과반수 이상 PASS 시 투표로 넘어감
+            return True
+            
         self.discussion_round += 1
-        
-        # 전원 침묵 시 또는 최대 라운드 도달 시 종료
-        if pass_count >= alive_count or self.discussion_round >= 2:
-            self.discussion_round = 0
+        if self.discussion_round >= config.game.MAX_DISCUSSION_ROUNDS:
             return True
             
         return False

@@ -204,18 +204,19 @@ class PPO:
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.buffer.clear()
     
-    def _split_episodes(self, states, is_terminals):
-        """에피소드 경계에 따라 상태를 분리"""
+    def _split_episodes(self, data_list, is_terminals):
+        """에피소드 경계에 따라 데이터를 분리"""
         episodes = []
         current_episode = []
         
-        for i, state in enumerate(states):
-            current_episode.append(state)
+        for i, data in enumerate(data_list):
+            current_episode.append(data)
             if is_terminals[i]:
                 if current_episode:
                     episodes.append(torch.stack(current_episode))
                 current_episode = []
         
+        # 마지막 에피소드가 끝나지 않았더라도 추가 (Truncated)
         if current_episode:
             episodes.append(torch.stack(current_episode))
         
