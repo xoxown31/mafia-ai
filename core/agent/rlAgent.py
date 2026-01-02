@@ -128,10 +128,14 @@ class RLAgent(BaseAgent):
         return action_vector
     
     def store_reward(self, reward: float, is_terminal: bool = False):
-        """보상 저장"""
-        self.learner.rewards.append(reward)
+        """보상 저장: 알고리즘별 버퍼 위치 확인"""
         if hasattr(self.learner, 'buffer'):
+            # PPO의 경우 buffer 객체 내의 리스트 사용
+            self.learner.buffer.rewards.append(reward)
             self.learner.buffer.is_terminals.append(is_terminal)
+        else:
+            # REINFORCE 등 buffer가 없는 경우 직접 저장
+            self.learner.rewards.append(reward)
     
     def update(self):
         """학습 수행 - 알고리즘 객체에 위임"""
