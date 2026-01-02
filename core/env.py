@@ -4,7 +4,7 @@ import numpy as np
 from typing import Dict, Any, List
 from core.game import MafiaGame
 from config import *
-from state import GameStatus, MafiaAction, PlayerStatus, GameEvent
+from state import GameStatus, GameAction, PlayerStatus, GameEvent
 
 
 class MafiaEnv(gym.Env):
@@ -12,7 +12,7 @@ class MafiaEnv(gym.Env):
         super(MafiaEnv, self).__init__()
         self.game = MafiaGame(log_file=log_file, logger=logger)
         self.logger = logger
-        
+
         # === [Multi-Discrete Action Space] ===
         # 형태: [Type, Target, Role]
         # - Type: 0=PASS, 1=TARGET_ACTION, 2=CLAIM (3개)
@@ -30,7 +30,7 @@ class MafiaEnv(gym.Env):
         # - phase_onehot: 3 (현재 페이즈: discussion, vote, night)
         # Total: 8 + 4 + 8 + 64 + 64 + 1 + 3 = 152
         obs_dim = 152
-        
+
         self.observation_space = spaces.Dict(
             {
                 "observation": spaces.Box(
@@ -40,55 +40,64 @@ class MafiaEnv(gym.Env):
                     dtype=np.float32,
                 ),
                 "action_mask": spaces.Box(
-                    low=0, high=1, shape=(3, 9, 5), dtype=np.int8  # Multi-Discrete 마스크
+                    low=0,
+                    high=1,
+                    shape=(3, 9, 5),
+                    dtype=np.int8,  # Multi-Discrete 마스크
                 ),
             }
         )
-        
+
         # 이전 턴의 투표 기록 저장
-        self.last_vote_record = np.zeros((config.game.PLAYER_COUNT, config.game.PLAYER_COUNT), dtype=np.float32)
+        self.last_vote_record = np.zeros(
+            (config.game.PLAYER_COUNT, config.game.PLAYER_COUNT), dtype=np.float32
+        )
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         status = self.game.reset()
         # 투표 기록 초기화
-        self.last_vote_record = np.zeros((config.game.PLAYER_COUNT, config.game.PLAYER_COUNT), dtype=np.float32)
+        self.last_vote_record = np.zeros(
+            (config.game.PLAYER_COUNT, config.game.PLAYER_COUNT), dtype=np.float32
+        )
         return self._encode_observation(status), {}
 
     def step(self, action_vector: List[int]):
         """
         환경 스텝 실행 - Multi-Discrete 방식
-        
+
         Args:
             action_vector: [Type, Target, Role] 형태의 Multi-Discrete 벡터
-        
+
         Returns:
             observation, reward, done, truncated, info
         """
         my_id = 0  # RL 에이전트는 항상 Player 0
         my_role = self.game.players[my_id].role
-        
+
         # 턴 진행 전 상태 저장
         prev_alive = [p.alive for p in self.game.players]
         prev_phase = self.game.phase
 
         # Multi-Discrete 벡터를 MafiaAction으로 변환
-        mafia_action = MafiaAction.from_multi_discrete(action_vector)
-        
+        mafia_action = GameAction.from_multi_discrete(action_vector)
+
         # RL 에이전트에게 액션 전달
         rl_agent = self.game.players[my_id]
-        if hasattr(rl_agent, 'set_action'):
+        if hasattr(rl_agent, "set_action"):
             rl_agent.set_action(mafia_action)
-        
+
         # 게임 진행
         status, done, win = self.game.process_turn()
-        
+
         # === 투표 기록 업데이트 (PHASE_DAY_VOTE 종료 후) ===
         if prev_phase == Phase.DAY_VOTE:
             # 투표 매트릭스 업데이트
-            self.last_vote_record = np.zeros((config.game.PLAYER_COUNT, config.game.PLAYER_COUNT), dtype=np.float32)
+            self.last_vote_record = np.zeros(
+                (config.game.PLAYER_COUNT, config.game.PLAYER_COUNT), dtype=np.float32
+            )
             for i, player in enumerate(self.game.players):
-                if hasattr(player, 'voted_by_last_turn'):
+                if hasattr(player, "voted_by_last_turn"):
                     for voter_id in player.voted_by_last_turn:
                         self.last_vote_record[voter_id][i] = 1.0
 
@@ -116,7 +125,7 @@ class MafiaEnv(gym.Env):
             action_type = mafia_action.action_type
             target_id = mafia_action.target_id
             claim_role = mafia_action.claim_role
-            
+
             # === [역할 주장 보상] ===
             if action_type == ActionType.CLAIM:
                 if claim_role == my_role:
@@ -128,7 +137,7 @@ class MafiaEnv(gym.Env):
                         reward += 1.0
                     else:
                         reward -= 2.0
-            
+
             # === [행동 보상] ===
             if action_type == ActionType.TARGET_ACTION and target_id != -1:
                 if my_role == Role.CITIZEN:
@@ -140,17 +149,19 @@ class MafiaEnv(gym.Env):
                     reward += self._calculate_police_reward(target_id, prev_phase)
                 elif my_role == Role.DOCTOR:
                     reward += self._calculate_citizen_reward(target_id, prev_phase)
-                    reward += self._calculate_doctor_reward(prev_alive, target_id, prev_phase)
+                    reward += self._calculate_doctor_reward(
+                        prev_alive, target_id, prev_phase
+                    )
 
         return self._encode_observation(status), reward, done, False, {}
-    
+
     def _calculate_citizen_reward(self, action, phase):
         """시민 팀 공통 보상 로직 - Dense Reward 강화"""
         if action == -1:
             return 0.0
-            
+
         reward = 0.0
-        
+
         # IndexError 방지
         if 0 <= action < len(self.game.players):
             target = self.game.players[action]
@@ -166,23 +177,23 @@ class MafiaEnv(gym.Env):
                     reward -= 8.0  # 중요 역할 지목 페널티 강화
                 elif target.role == Role.CITIZEN:
                     reward -= 2.0  # 시민 지목 페널티
-            
+
             # 낮 토론: 마피아를 의심하면 중간 보상 (학습 신호)
             elif phase == Phase.DAY_DISCUSSION:
                 if target.role == Role.MAFIA:
                     reward += 3.0  # 마피아 의심 보상 강화 (1 → 3)
                 elif target.role in [Role.POLICE, Role.DOCTOR]:
                     reward -= 1.0  # 중요 역할 의심 시 소량 페널티
-                
+
         return reward
 
     def _calculate_mafia_reward(self, action, phase):
         """마피아 보상 로직 - Dense Reward 대폭 강화"""
         if action == -1:
             return 0.0
-            
+
         reward = 0.0
-        
+
         if 0 <= action < len(self.game.players):
             target = self.game.players[action]
 
@@ -218,16 +229,16 @@ class MafiaEnv(gym.Env):
                     reward += 8.0  # 시민 제거 (3 → 8)
                     if not target.alive:
                         reward += 5.0
-                
+
         return reward
 
     def _calculate_police_reward(self, action, phase):
         """경찰 특수 보상 - 밤에 조사 성공 (Dense Reward 대폭 강화)"""
         if action == -1 or phase != Phase.NIGHT:
             return 0.0
-            
+
         reward = 0.0
-        
+
         if 0 <= action < len(self.game.players):
             target = self.game.players[action]
             if target.role == Role.MAFIA:
@@ -241,17 +252,17 @@ class MafiaEnv(gym.Env):
         """의사 특수 보상 - 치료 성공 (Dense Reward 대폭 강화)"""
         if action == -1 or phase != Phase.NIGHT:
             return 0.0
-            
+
         reward = 0.0
-        
+
         # 치료 성공 확인 (사망자가 없었으면 치료 성공)
         current_alive_count = sum(p.alive for p in self.game.players)
         prev_alive_count = sum(prev_alive)
-        
+
         if current_alive_count == prev_alive_count:
             # 치료 성공 (매우 중요한 행동)
             reward += 25.0  # 치료 성공 보상 대폭 강화 (10 → 25)
-            
+
             # 중요 역할을 살렸으면 추가 보상
             if 0 <= action < len(self.game.players):
                 target = self.game.players[action]
@@ -270,7 +281,7 @@ class MafiaEnv(gym.Env):
     def _encode_observation(self, status: GameStatus) -> Dict:
         """
         GameStatus를 사용한 관측 인코딩 - 순수 함수 기반
-        
+
         State Matrix 구성 (총 152차원):
         - alive_status: 8 (생존 여부)
         - my_role: 4 (내 역할 one-hot)
@@ -283,37 +294,36 @@ class MafiaEnv(gym.Env):
         my_id = 0  # RL agent는 항상 Player 0
         my_role = self.game.players[my_id].role
         n_players = config.game.PLAYER_COUNT
-        
+
         # 1. alive_status (8차원)
-        alive_status = np.array([
-            1.0 if p.alive else 0.0 
-            for p in status.players
-        ], dtype=np.float32)
-        
+        alive_status = np.array(
+            [1.0 if p.alive else 0.0 for p in status.players], dtype=np.float32
+        )
+
         # 2. my_role (4차원 one-hot)
         my_role_vec = np.zeros(len(Role), dtype=np.float32)
         my_role_vec[int(status.my_role)] = 1.0
-        
+
         # 3. claim_status (8차원) - history에서 CLAIM 이벤트 추출
         claim_status = np.zeros(n_players, dtype=np.float32)
         for event in status.action_history:
             if event.event_type == EventType.CLAIM and event.value is not None:
                 if isinstance(event.value, Role):
                     claim_status[event.actor_id] = float(int(event.value))
-        
+
         # 4. accusation_matrix (64차원 = 8x8) - CLAIM + target_id가 있는 경우
         accusation_matrix = np.zeros((n_players, n_players), dtype=np.float32)
         for event in status.action_history:
             if event.event_type == EventType.CLAIM and event.target_id is not None:
                 accusation_matrix[event.actor_id][event.target_id] = 1.0
         accusation_flat = accusation_matrix.flatten()
-        
+
         # 5. last_vote_matrix (64차원 = 8x8) - 외부에서 전달받은 투표 기록
         last_vote_flat = self.last_vote_record.flatten()
-        
+
         # 6. day_count (1차원, 정규화)
         day_normalized = np.array([status.day / config.game.MAX_DAYS], dtype=np.float32)
-        
+
         # 7. phase_onehot (3차원)
         phase_onehot = np.zeros(3, dtype=np.float32)
         if status.phase == Phase.DAY_DISCUSSION:
@@ -322,29 +332,35 @@ class MafiaEnv(gym.Env):
             phase_onehot[1] = 1.0
         elif status.phase == Phase.NIGHT:
             phase_onehot[2] = 1.0
-        
+
         # 전체 결합
-        observation = np.concatenate([
-            alive_status,       # 8
-            my_role_vec,        # 4
-            claim_status,       # 8
-            accusation_flat,    # 64
-            last_vote_flat,     # 64
-            day_normalized,     # 1
-            phase_onehot,       # 3
-        ])
-        
-        assert observation.shape == (152,), f"Expected 152 dims, got {observation.shape}"
-        
+        observation = np.concatenate(
+            [
+                alive_status,  # 8
+                my_role_vec,  # 4
+                claim_status,  # 8
+                accusation_flat,  # 64
+                last_vote_flat,  # 64
+                day_normalized,  # 1
+                phase_onehot,  # 3
+            ]
+        )
+
+        assert observation.shape == (
+            152,
+        ), f"Expected 152 dims, got {observation.shape}"
+
         # 액션 마스크 계산
         action_mask = self._compute_action_mask(status, my_id, my_role)
-        
+
         return {"observation": observation, "action_mask": action_mask}
-    
-    def _compute_action_mask(self, status: GameStatus, my_id: int, my_role: Role) -> np.ndarray:
+
+    def _compute_action_mask(
+        self, status: GameStatus, my_id: int, my_role: Role
+    ) -> np.ndarray:
         """
         Multi-Discrete 액션 마스크 계산
-        
+
         마스크 구조: [Type(3), Target(9), Role(5)]
         - Type: [PASS, TARGET_ACTION, CLAIM]
         - Target: [-1, 0, 1, 2, 3, 4, 5, 6, 7]
@@ -352,7 +368,7 @@ class MafiaEnv(gym.Env):
         """
         mask = np.ones((3, 9, 5), dtype=np.int8)
         phase = status.phase
-        
+
         # === Type 마스크 ===
         if phase in (Phase.DAY_DISCUSSION, Phase.DAY_VOTE):
             mask[0, :, :] = 1  # PASS 허용
@@ -362,7 +378,7 @@ class MafiaEnv(gym.Env):
             mask[0, :, :] = 0  # PASS 불가
             mask[1, :, :] = 1  # TARGET_ACTION 허용
             mask[2, :, :] = 0  # CLAIM 불가
-        
+
         # === Target 마스크 ===
         mask[:, 0, :] = 1  # -1 (타겟 없음) 항상 허용
         for i in range(config.game.PLAYER_COUNT):
@@ -375,14 +391,14 @@ class MafiaEnv(gym.Env):
                     mask[1, target_idx, :] = 0  # TARGET_ACTION 불가
                 elif phase == Phase.NIGHT and my_role == Role.POLICE:
                     mask[1, target_idx, :] = 0  # 경찰은 자신 조사 불가
-        
+
         # === Role 마스크 ===
         mask[:, :, 0] = 1  # -1 (역할 없음) 항상 허용
         if phase == Phase.DAY_DISCUSSION:
             mask[2, :, 1:] = 1  # CLAIM 타입에서 모든 역할 주장 허용
         else:
             mask[2, :, 1:] = 0  # 토론 외에는 역할 주장 불가
-        
+
         return mask
 
     def render(self):
@@ -391,7 +407,7 @@ class MafiaEnv(gym.Env):
             Phase.DAY_DISCUSSION: "Discussion",
             Phase.DAY_VOTE: "Vote",
             Phase.DAY_EXECUTE: "Execute",
-            Phase.NIGHT: "Night"
+            Phase.NIGHT: "Night",
         }
         phase_str = phase_names.get(self.game.phase, str(self.game.phase))
         status = self.game.get_game_status()

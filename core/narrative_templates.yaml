@@ -1,10 +1,13 @@
 # 내러티브 템플릿 (한국어)
 # LogManager.interpret_event()에서 사용
 
+"SYSTEM_MESSAGE": "Day {day} | Player {target_id}의 직업은 {role_name}입니다."
 CLAIM_SELF: "Day {day} | Player {actor_id}는 자신이 {role_name}라고 주장했습니다."
 CLAIM_OTHER: "Day {day} | Player {actor_id}는 Player {target_id}가 {role_name}라고 주장했습니다."
 VOTE: "Day {day} | Player {actor_id}가 Player {target_id}에게 투표했습니다."
+ABSTAIN: "Day {day} | Player {actor_id}는 기권하였습니다."
 EXECUTE: "Day {day} | Player {target_id}가 처형되었습니다. (역할: {role_name})"
+CANCEL: "Day {day} | Player {target_id}가 처형이 부결되었습니다."
 KILL: "Night {day} | Player {target_id}가 마피아에게 살해당했습니다."
 PROTECT: "Night {day} | 의사가 Player {target_id}를 보호했습니다."
 POLICE_RESULT: "Night {day} | 경찰이 Player {target_id}를 조사한 결과: {role_name}"
