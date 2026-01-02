@@ -54,8 +54,8 @@ class PPO:
             
             # Unpack logits
             target_logits, role_logits = logits_tuple
-            target_logits = target_logits.squeeze(0)
-            role_logits = role_logits.squeeze(0)
+            target_logits = target_logits.view(-1)
+            role_logits = role_logits.view(-1)
             
             # Apply Masking if available
             if mask is not None:
@@ -113,7 +113,8 @@ class PPO:
             rewards.insert(0, discounted_reward)
             
         rewards = torch.tensor(rewards, dtype=torch.float32)
-        if rewards.std() > 1e-7:
+        
+        if len(rewards) > 1 and rewards.std() > 1e-7:
             rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
         
         old_states = torch.stack(self.buffer.states, dim=0).detach()
@@ -135,8 +136,9 @@ class PPO:
         
         for _ in range(self.k_epochs):
             total_loss = 0
+            self.optimizer.zero_grad()
+            
             for i in range(len(ep_states_list)):
-                # (seq_len, dim) -> (1, seq_len, dim)
                 ep_states = ep_states_list[i].unsqueeze(0)
                 ep_actions = ep_actions_list[i]
                 ep_old_logprobs = ep_logprobs_list[i]
@@ -149,7 +151,7 @@ class PPO:
                 # Remove batch dim: (1, seq, dim) -> (seq, dim)
                 target_logits = target_logits.squeeze(0)
                 role_logits = role_logits.squeeze(0)
-                state_values = state_values.squeeze(0).squeeze(-1)
+                state_values = state_values.view(-1)
                 
                 dist_target = Categorical(logits=target_logits)
                 dist_role = Categorical(logits=role_logits)
@@ -169,11 +171,11 @@ class PPO:
                 loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, ep_rewards) - self.entropy_coef * dist_entropy
                 total_loss += loss.mean()
             
-            loss = total_loss / len(ep_states_list)
-            
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+            if len(ep_states_list) > 0:
+                avg_loss = total_loss / len(ep_states_list)
+                avg_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                self.optimizer.step()
             
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.buffer.clear()

@@ -3,11 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-
 class DynamicActorCritic(nn.Module):
     """
     RNN(LSTM/GRU) 기반의 Actor-Critic 모델
@@ -85,14 +80,14 @@ class DynamicActorCritic(nn.Module):
         else:
             features, new_hidden_state = self.backbone(state)
         
-        # 마지막 타임스텝의 출력 사용
-        last_features = features[:, -1, :]
+        # features: [batch, seq_len, hidden_dim]
+        # Apply heads to all timesteps
         
         # Multi-Head Output
-        target_logits = self.actor_target(last_features)
-        role_logits = self.actor_role(last_features)
+        target_logits = self.actor_target(features)
+        role_logits = self.actor_role(features)
         
-        state_value = self.critic(last_features)
+        state_value = self.critic(features)
         
         return (target_logits, role_logits), state_value, new_hidden_state
     
