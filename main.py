@@ -54,8 +54,8 @@ def run_simulation(args):
         env = MafiaEnv(logger=logger)
         agent_id = env.possible_agents[0]
         # state_dim = env.observation_space(agent_id)["observation"].shape[0]
-        # 78차원으로 고정
-        state_dim = 78
+        # Config에서 가져오기
+        state_dim = config.game.OBS_DIM
         
         # 모든 에이전트 생성 (RL 및 LLM)
         agents = {}

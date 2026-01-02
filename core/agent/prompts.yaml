@@ -12,16 +12,6 @@ JSON_FORMAT_BLOCK: &json_format_block |
 
 # 게임 단계별 JSON 스키마 정의
 PHASE_SCHEMAS:
-  BELIEF_UPDATE: |
-    {
-      "belief_updates": [
-        {
-        "player_id": "integer",
-        "role": "string",
-        "delta": "integer"
-        }
-      ]
-    }
   DAY_DISCUSSION: |
     {
       "discussion_status": "string ('Continue' 또는 'End')",
@@ -55,29 +45,12 @@ PHASE_SCHEMAS:
 GAME_DATA_BLOCK: &game_data_block |
   ## [GAME DATA FORMAT]
   - 당신의 역할: {role_name} / ID: {id}
-  - 현재 신념 행렬: {belief_matrix}
   - 게임 상태:
   {game_status}
   - 대화 및 행동 기록: {conversation_log}
 
 # ==========================================================
-# 2. 인지 및 복기 단계 (BELIEF UPDATE)
-# ==========================================================
-BELIEF_UPDATE:
-  system: |
-    당신은 마피아 게임 추론 전문가입니다. 사건 기록을 분석하여 각 플레이어의 정체 확률 $S_{belief}$를 갱신하십시오.
-    반드시 JSON 형식으로만 답변해야 합니다.
-  user: |
-    {game_data}
-
-    ### [분석 지침]
-    1. `action_history`를 검토하여 누가 누구를 지목(CLAIM)했고 투표(VOTE)했는지 확인하십시오.
-    2. 사망자의 실제 정체와 생전의 발언 사이의 모순을 찾으십시오.
-    3. 당신이 마피아라면, 시민 팀의 추론을 방해하기 위해 신념 수치를 전략적으로 조정할 수 있습니다.
-    4. 각 플레이어별로 마피아 확률 변화량 $\Delta$를 결정하십시오.
-
-# ==========================================================
-# 3. 낮 토론 단계 (DAY_DISCUSSION)
+# 2. 낮 토론 단계 (DAY_DISCUSSION)
 # ==========================================================
 MAFIA_DAY_DISCUSSION:
   system: "당신은 기만과 선동에 능한 마피아입니다. 정체를 숨기고 시민들을 혼란에 빠뜨리십시오. JSON 형식으로 답변하십시오."

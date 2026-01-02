@@ -71,9 +71,8 @@ def train(env, rl_agents: Dict[int, Any], all_agents: Dict[int, Any], args, logg
                     # env가 제공하는 인터페이스를 사용해야 하지만, 현재 구조상 game 접근이 불가피함.
                     # 다만, env.agents에 있는 에이전트만 실행하므로 생존 여부는 확인됨.
                     status = env.game.get_game_status(player.id)
-                    player.observe(status)
                     
-                    a = player.get_action()
+                    a = player.get_action(status)
                     with lock:
                         actions[p_key] = a
                 except Exception as e:
@@ -96,12 +95,10 @@ def train(env, rl_agents: Dict[int, Any], all_agents: Dict[int, Any], args, logg
                     else:
                         try:
                             # 일반 봇도 상태 업데이트 필요할 수 있음
-                            if hasattr(agent, 'observe'):
-                                status = env.game.get_game_status(pid)
-                                agent.observe(status)
+                            status = env.game.get_game_status(pid)
                             
                             # 봇 액션 가져오기
-                            a = agent.get_action()
+                            a = agent.get_action(status)
                             actions[p_key] = a
                         except Exception as e:
                             print(f"Error in Bot action: {e}")
@@ -207,11 +204,8 @@ def test(env, all_agents: Dict[int, Any], args):
             # LLM / Bot Agent
             else:
                 # Update status
-                if hasattr(agent, 'observe'):
-                    status = env.game.get_game_status(pid)
-                    agent.observe(status)
-                
-                actions[agent_key] = agent.get_action()
+                status = env.game.get_game_status(pid)
+                actions[agent_key] = agent.get_action(status)
 
         next_obs_dict, rewards, terminations, truncations, infos = env.step(actions)
         

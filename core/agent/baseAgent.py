@@ -24,32 +24,12 @@ class BaseAgent(ABC):
         self.id = player_id
         self.role = role
         self.alive = True
-        self.current_status: GameStatus = None
-
-        # Belief Matrix: (N x 4) - 각 플레이어가 각 직업일 것이라는 신뢰 점수
-        # 열(Col): [0: 시민, 1: 경찰, 2: 의사, 3: 마피아]
-        self.belief = np.random.normal(0, 0.1, (config.game.PLAYER_COUNT, len(Role)))
-
-        # 자신의 belief는 확실하게 설정
-        role_idx = int(self.role)
-        self.belief[self.id, :] = -100.0
-        self.belief[self.id, role_idx] = 100.0
 
         # 게임 히스토리 추적
         self.vote_history = [0] * config.game.PLAYER_COUNT
         self.char_name = self.__class__.__name__
 
-    def observe(self, status: GameStatus):
-        """정보를 수신하는 유일한 입구"""
-        self.current_status = status
-        self.update_belief(status.action_history)
-
     @abstractmethod
-    def update_belief(self, history: List[GameEvent]):
-        """객관적 사실(Fact) 반영"""
-        pass
-
-    @abstractmethod
-    def get_action(self) -> GameAction:
+    def get_action(self, status: GameStatus) -> GameAction:
         """주관적 추론(Hunch) 및 결정 - EngineAction 튜플 반환"""
         pass

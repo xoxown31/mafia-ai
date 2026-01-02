@@ -83,15 +83,11 @@ class RLAgent(BaseAgent):
         else:
             self.hidden_state = None
 
-    def update_belief(self, history: List[GameEvent]):
-        """BaseAgent의 추상 메서드 구현"""
-        pass
-
     def set_action(self, action: GameAction):
         """env.step()에서 호출되어 액션 설정"""
         self.current_action = action
 
-    def get_action(self) -> GameAction:
+    def get_action(self, status: GameStatus) -> GameAction:
         """
         BaseAgent 호환성을 위한 메서드 - MafiaAction 반환
 

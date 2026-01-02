@@ -8,7 +8,7 @@ class DynamicActorCritic(nn.Module):
     RNN(LSTM/GRU) 기반의 Actor-Critic 모델
     
     Args:
-        state_dim: 입력 상태 차원 (78)
+        state_dim: 입력 상태 차원 (Config.OBS_DIM)
         action_dims: 출력 행동 차원 리스트 (예: [9, 5])
         backbone: 백본 타입 ("lstm", "gru")
         hidden_dim: 은닉층 차원 (기본값: 128)

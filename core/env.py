@@ -17,10 +17,7 @@ class EnvAgent(BaseAgent):
     Environment internal agent placeholder to satisfy MafiaGame requirements.
     This agent does not perform any logic; it just holds state.
     """
-    def update_belief(self, history: List[GameEvent]):
-        pass
-
-    def get_action(self) -> GameAction:
+    def get_action(self, status: GameStatus) -> GameAction:
         return GameAction(target_id=-1, claim_role=None)
 
 class MafiaEnv(ParallelEnv):
@@ -182,7 +179,84 @@ class MafiaEnv(ParallelEnv):
             reward += self._calculate_police_reward(action_target, prev_phase)
         elif role == Role.DOCTOR:
             reward += self._calculate_doctor_reward(prev_alive, action_target, prev_phase)
+            
+        # 4. 기만 및 설득 보상 (New)
+        reward += self._calculate_deception_reward(agent_id, role, prev_phase)
+        reward += self._calculate_persuasion_reward(agent_id, role, prev_phase, mafia_action)
         
+        return reward
+
+    def _calculate_deception_reward(self, agent_id, role, phase):
+        """
+        마피아 기만 보상:
+        - 낮 토론 단계에서 타인이 나를 경찰/의사로 지목 시 보상
+        - 투표 단계에서 나의 득표수가 생존자 평균보다 낮을 경우 보상
+        """
+        if role != Role.MAFIA:
+            return 0.0
+            
+        reward = 0.0
+        
+        # 1. 낮 토론 단계: 타인이 나를 경찰/의사로 지목
+        if phase == Phase.DAY_DISCUSSION:
+            if self.game.history:
+                last_evt = self.game.history[-1]
+                if (last_evt.event_type == EventType.CLAIM and 
+                    last_evt.target_id == agent_id and 
+                    last_evt.actor_id != agent_id):
+                    
+                    if last_evt.value in [Role.POLICE, Role.DOCTOR]:
+                        reward += 0.5  # 기만 성공
+        
+        # 2. 투표 단계: 득표수가 평균보다 낮음
+        elif phase == Phase.DAY_VOTE:
+            alive_players = [p for p in self.game.players if p.alive]
+            if not alive_players: return 0.0
+            
+            avg_votes = sum(p.vote_count for p in alive_players) / len(alive_players)
+            my_votes = self.game.players[agent_id].vote_count
+            
+            if my_votes < avg_votes:
+                reward += 0.2
+                
+        return reward
+
+    def _calculate_persuasion_reward(self, agent_id, role, phase, my_action):
+        """
+        시민 설득 보상:
+        - 내가 지목한 타겟에게 다른 플레이어들이 동조하여 투표하거나 지목할 경우 보상
+        """
+        # 마피아도 설득이 필요하지만, 요구사항에 따라 시민 팀에게만 적용하거나
+        # 혹은 전체에게 적용할 수도 있음. 여기서는 시민 팀(시민, 경찰, 의사)에게 적용.
+        if role == Role.MAFIA:
+            return 0.0
+            
+        reward = 0.0
+        
+        if not my_action or my_action.target_id == -1:
+            return 0.0
+            
+        target_id = my_action.target_id
+        
+        if phase == Phase.DAY_VOTE:
+            # 타겟의 득표수 확인 (나 제외)
+            target_votes = self.game.players[target_id].vote_count
+            if target_votes > 1: # 나 말고 최소 1명 더
+                reward += 0.1 * (target_votes - 1)
+                
+        elif phase == Phase.DAY_DISCUSSION:
+            # 최근 history 확인
+            count = 0
+            recent_events = self.game.history[-config.game.PLAYER_COUNT:]
+            for evt in recent_events:
+                if (evt.event_type == EventType.CLAIM and 
+                    evt.target_id == target_id and 
+                    evt.actor_id != agent_id):
+                    count += 1
+            
+            if count > 0:
+                reward += 0.2 * count
+                
         return reward
 
     def _calculate_citizen_reward(self, action, phase):
@@ -263,7 +337,7 @@ class MafiaEnv(ParallelEnv):
 
     def _encode_observation(self, agent_id: int, target_event: Optional[GameEvent] = None) -> np.ndarray:
         """
-        78차원 관측 벡터 생성
+        46차원 관측 벡터 생성 (Belief Matrix 제거)
         target_event가 주어지면 해당 이벤트를 '직전 사건'으로 인코딩.
         없으면 가장 최근 이벤트를 사용.
         """
@@ -292,9 +366,7 @@ class MafiaEnv(ParallelEnv):
         else: # Execute or Night
             phase_vec[2] = 1.0
             
-        # 3. 주관적 신뢰도 (32)
-        # Belief Matrix (8x4) -> Flatten
-        belief_vec = agent.belief.flatten().astype(np.float32)
+        # 3. 주관적 신뢰도 (32) -> 제거됨
         
         # 4. 직전 사건 (30)
         # target_event가 있으면 그것을 사용, 없으면 history의 마지막 사용
@@ -348,12 +420,12 @@ class MafiaEnv(ParallelEnv):
             role_vec,    # 4
             day_vec,     # 1
             phase_vec,   # 3
-            belief_vec,  # 32
+            # belief_vec,  # REMOVED
             actor_vec,   # 9
             target_vec,  # 9
             value_vec,   # 5
             type_vec     # 7
-        ]) # Total 78
+        ]) # Total 46
         
         return obs
 
