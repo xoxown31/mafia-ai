@@ -39,6 +39,7 @@ class MafiaGame:
         random.shuffle(roles)
         for p, r in zip(self.players, roles):
             p.role = r
+            p.vote_count = 0  # 투표 수 초기화
             # 역할 할당 이벤트 로깅
             if self.logger:
                 # GameEvent로 기록 (JSONL 저장용)
@@ -184,6 +185,10 @@ class MafiaGame:
         """
         votes = [0] * len(self.players)
         
+        # 투표 수 초기화 (보상 계산 안전성 확보)
+        for p in self.players:
+            p.vote_count = 0
+        
         # Phase 2: 모든 투표를 한 번에 처리
         for player_id, action in actions.items():
             target_id = action.target_id
@@ -207,13 +212,10 @@ class MafiaGame:
                 and self.players[target_id].alive
             ):
                 votes[target_id] += 1
+                self.players[target_id].vote_count += 1
 
         self._last_votes = votes
 
-        # Phase 3: 결과를 모두에게 공개
-        for p in self.players:
-            if p.alive:
-                p.observe(self.get_game_status(p.id))
         
         return True
 
@@ -288,10 +290,6 @@ class MafiaGame:
                 if self.logger:
                     self.logger.log_event(role_reveal_event)
 
-        # Phase 3: 결과를 모두에게 공개
-        for p in self.players:
-            if p.alive:
-                p.observe(self.get_game_status(p.id))
         
         return True
 
@@ -385,11 +383,6 @@ class MafiaGame:
 
         if mafia_target is not None and mafia_target != doctor_target:
             self.players[mafia_target].alive = False
-
-        # Phase 4: 결과를 모두에게 공개
-        for p in self.players:
-            if p.alive:
-                p.observe(self.get_game_status(p.id))
         
         return True
 
