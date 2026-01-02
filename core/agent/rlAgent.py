@@ -18,13 +18,13 @@ class RLAgent(BaseAgent):
     """
     PPO, REINFORCE, IL, RNN을 모두 지원하는 통합 RL 에이전트
     
-    Multi-Discrete 액션 공간 지원: [Type, Target, Role]
+    Multi-Discrete 액션 공간 지원: [Target, Role]
     
     Args:
         player_id: 플레이어 ID
         role: 플레이어 역할
         state_dim: 상태 벡터 차원
-        action_dims: Multi-Discrete 액션 차원 리스트 [3, 9, 5]
+        action_dims: Multi-Discrete 액션 차원 리스트 [9, 5]
         algorithm: "ppo" 또는 "reinforce"
         backbone: "mlp", "lstm", "gru"
         use_il: Imitation Learning 사용 여부

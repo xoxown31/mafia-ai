@@ -40,15 +40,19 @@ class PPO:
     def select_action(self, state, hidden_state=None):
         if isinstance(state, dict):
             obs = state['observation']
-            mask = state['action_mask']  # Shape: (3, 9, 5)
+            mask = state['action_mask']  # Shape: (14,)
         else:
             obs = state
             mask = None
             
         with torch.no_grad():
+            # obs: (78,) -> (1, 1, 78) for RNN (batch, seq, feature)
+            # or (1, 78) for MLP
             state_tensor = torch.FloatTensor(obs).unsqueeze(0)
+            if self.is_rnn:
+                state_tensor = state_tensor.unsqueeze(0)
             
-            # logits_tuple: (type_logits, target_logits, role_logits)
+            # logits_tuple: (target_logits, role_logits)
             logits_tuple, _, new_hidden = self.policy_old(state_tensor, hidden_state)
             
             # Unpack logits
@@ -86,11 +90,16 @@ class PPO:
             
             action = torch.stack([action_target, action_role])
             
-        self.buffer.states.append(state_tensor.squeeze(0))
+        # Store in buffer
+        # For RNN, we store the state as (78,) and reconstruct sequences in update()
+        self.buffer.states.append(torch.FloatTensor(obs))
         self.buffer.actions.append(action)
         self.buffer.logprobs.append(action_logprob)
-        if self.is_rnn and new_hidden is not None:
-            self.buffer.hidden_states.append(new_hidden)
+        
+        # Note: We don't store hidden_states in buffer for PPO update usually, 
+        # because we re-run the policy on the trajectory.
+        # But if we want to support truncated BPTT, we might need them.
+        # Here we assume full episode training or simple batching.
         
         return action.tolist(), new_hidden
 

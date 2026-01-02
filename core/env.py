@@ -42,12 +42,12 @@ class MafiaEnv(ParallelEnv):
         # - Target: 0=None, 1~8=Player 0~7 (9개)
         # - Role: 0=None, 1~4=Role Enum (5개)
         self.action_spaces = {
-            agent: spaces.MultiDiscrete([9, 5]) for agent in self.possible_agents
+            agent: spaces.MultiDiscrete(config.game.ACTION_DIMS) for agent in self.possible_agents
         }
         
         # Observation Space: 78차원 슬림화
         # 자기 정보(12) + 게임 상황(4) + 주관적 신뢰도(32) + 직전 사건(30)
-        obs_dim = 78
+        obs_dim = config.game.OBS_DIM
         self.observation_spaces = {
             agent: spaces.Dict({
                 "observation": spaces.Box(low=-1, high=1, shape=(obs_dim,), dtype=np.float32),
@@ -89,16 +89,9 @@ class MafiaEnv(ParallelEnv):
         prev_alive = [p.alive for p in self.game.players]
         prev_phase = self.game.phase
 
-        # 게임 진행 (순차적 반영은 game.py 내부에서 처리)
-        # game.step_phase는 이번 턴에 발생한 모든 이벤트를 history에 추가함.
-        # 우리는 이번 step에서 새로 추가된 이벤트들만 추출하여 시퀀스로 만들어야 함.
-        
-        prev_history_len = len(self.game.history)
+        # 게임 진행
         status, is_over, is_win = self.game.step_phase(engine_actions)
-        new_events = self.game.history[prev_history_len:]
         
-        # === 투표 기록 업데이트 (삭제됨) ===
-
         observations = {}
         rewards = {}
         terminations = {}
@@ -108,32 +101,10 @@ class MafiaEnv(ParallelEnv):
         for agent in self.agents:
             pid = self._agent_to_id(agent)
             
-            # 시퀀스 관측 생성
-            # new_events가 비어있으면(아무 일도 안 일어남) 현재 상태 하나만 반환
-            # new_events가 있으면 각 이벤트 직후의 상태를 시퀀스로 반환
-            
-            if not new_events:
-                obs_seq = [self._encode_observation(pid, None)]
-            else:
-                obs_seq = []
-                # 각 이벤트에 대해 가상의 상태를 만들어야 함.
-                # 하지만 _encode_observation은 현재 game 상태를 참조함.
-                # game 상태는 이미 모든 이벤트가 반영된 후임.
-                # 따라서 정확한 "이벤트 발생 직후"의 상태를 재구성하기 어려움.
-                # 
-                # 대안: _encode_observation에 특정 이벤트를 주입하여 "직전 사건" 부분만 바꿔치기함.
-                # 나머지 상태(생존 여부, 페이즈 등)는 최종 상태를 공유한다고 가정 (근사).
-                # 엄밀하게는 각 이벤트 시점의 생존자/페이즈 등을 알아야 하지만, 
-                # 한 턴 내에서는 크게 변하지 않거나(토론), 변하더라도 최종 상태를 써도 무방할 수 있음.
-                
-                for event in new_events:
-                    obs_seq.append(self._encode_observation(pid, event))
-            
-            # obs_seq: List[np.array] -> np.array (seq_len, 78)
-            obs_array = np.stack(obs_seq)
-            
+            # 단일 관측 반환 (시퀀스 생성 로직 제거)
+            # 에이전트 내부 버퍼에서 시퀀스를 쌓아서 학습에 사용해야 함
             observations[agent] = {
-                "observation": obs_array,
+                "observation": self._encode_observation(pid),
                 "action_mask": self._get_action_mask(pid)
             }
             
@@ -182,52 +153,25 @@ class MafiaEnv(ParallelEnv):
         agent = self.game.players[agent_id]
         role = agent.role
         
-        # 1. 승패 보상
+        # 1. 승패 보상 (Sparse Reward)
         if done:
             is_mafia_team = role == Role.MAFIA
             my_win = (win and not is_mafia_team) or (not win and is_mafia_team)
             
             if my_win:
-                reward += 30.0
-                reward += (config.game.MAX_DAYS - self.game.day) * 1.0
+                reward += 10.0
             else:
-                reward -= 15.0
+                reward -= 5.0
 
-        # 2. 생존 보상
+        # 2. 생존 보상 (약하게)
         if not agent.alive:
-            reward -= 2.0
+            reward -= 0.1
         else:
-            reward += 0.5
+            reward += 0.05
 
-        # 3. 역할 기반 행동 보상
-        if agent.alive and mafia_action:
-            target_id = mafia_action.target_id
-            claim_role = mafia_action.claim_role
-            
-            # === [역할 주장 보상] ===
-            if claim_role is not None:
-                if claim_role == role:
-                    reward += 2.0
-                    if role in [Role.POLICE, Role.DOCTOR]:
-                        reward += 3.0
-                else:
-                    if role == Role.MAFIA:
-                        reward += 1.0
-                    else:
-                        reward -= 2.0
-            
-            # === [행동 보상] ===
-            if target_id != -1 and claim_role is None:
-                if role == Role.CITIZEN:
-                    reward += self._calculate_citizen_reward(target_id, prev_phase)
-                elif role == Role.MAFIA:
-                    reward += self._calculate_mafia_reward(target_id, prev_phase)
-                elif role == Role.POLICE:
-                    reward += self._calculate_citizen_reward(target_id, prev_phase)
-                    reward += self._calculate_police_reward(target_id, prev_phase)
-                elif role == Role.DOCTOR:
-                    reward += self._calculate_citizen_reward(target_id, prev_phase)
-                    reward += self._calculate_doctor_reward(prev_alive, target_id, prev_phase)
+        # 3. 역할 기반 행동 보상 (단순화)
+        # 초기 학습 안정화를 위해 복잡한 조건부 보상 제거
+        # 필요 시 나중에 추가
         
         return reward
 

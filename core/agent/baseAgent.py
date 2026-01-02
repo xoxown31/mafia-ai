@@ -3,7 +3,7 @@ from typing import List, Dict, Any
 import numpy as np
 import random
 from config import config, Role
-from state import GameStatus, GameEvent
+from state import GameStatus, GameEvent, MafiaAction
 
 
 # Softmax 유틸리티 함수
@@ -50,6 +50,6 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    def get_action(self) -> 'EngineAction':
-        """주관적 추론(Hunch) 및 결정 - EngineAction 튜플 반환"""
+    def get_action(self) -> MafiaAction:
+        """주관적 추론(Hunch) 및 결정 - 튜플 반환"""
         pass

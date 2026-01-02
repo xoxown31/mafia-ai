@@ -24,7 +24,7 @@ def train(env, rl_agents: Dict[int, Any], all_agents: Dict[int, Any], args, logg
         return
 
     first_agent = next(iter(rl_agents.values()))
-    algorithm_name = getattr(first_agent, 'algorithm', args.agent).upper()
+    algorithm_name = getattr(first_agent, 'algorithm', 'RL').upper()
     backbone_name = getattr(first_agent, 'backbone', 'mlp').upper()
     
     print(f"Start Training ({algorithm_name}+{backbone_name}) for {args.episodes} episodes...")
@@ -67,6 +67,9 @@ def train(env, rl_agents: Dict[int, Any], all_agents: Dict[int, Any], args, logg
             def get_llm_action(player, p_key):
                 try:
                     # LLM 에이전트에게 현재 상태 전달
+                    # env.game에 직접 접근하는 대신, env.infos 등을 활용하거나
+                    # env가 제공하는 인터페이스를 사용해야 하지만, 현재 구조상 game 접근이 불가피함.
+                    # 다만, env.agents에 있는 에이전트만 실행하므로 생존 여부는 확인됨.
                     status = env.game.get_game_status(player.id)
                     player.observe(status)
                     
@@ -80,14 +83,12 @@ def train(env, rl_agents: Dict[int, Any], all_agents: Dict[int, Any], args, logg
             for pid, agent in all_agents.items():
                 p_key = id_to_agent(pid)
                 
-                # RL 에이전트가 아니고, 아직 액션이 없으며, 살아있는 경우
-                # (살아있는지 확인하려면 env.game.players를 참조하거나 status를 봐야 함)
-                # 여기서는 env.game.players[pid].alive를 참조 (env 캡슐화 위반 최소화)
-                # 또는 obs_dict에 키가 있는지 확인? obs_dict는 살아있는 에이전트만 포함됨.
-                # 하지만 LLM 에이전트는 obs_dict를 안 쓸 수도 있음.
-                # PettingZoo env.agents는 살아있는 에이전트 리스트임.
-                
-                if p_key in env.agents and pid not in rl_agents and p_key not in actions:
+                # RL 에이전트는 이미 처리됨
+                if pid in rl_agents:
+                    continue
+                    
+                # 살아있는 에이전트만 처리 (env.agents는 살아있는 에이전트 ID 리스트)
+                if p_key in env.agents:
                     if isinstance(agent, LLMAgent):
                         t = threading.Thread(target=get_llm_action, args=(agent, p_key))
                         threads.append(t)
@@ -98,10 +99,14 @@ def train(env, rl_agents: Dict[int, Any], all_agents: Dict[int, Any], args, logg
                             if hasattr(agent, 'observe'):
                                 status = env.game.get_game_status(pid)
                                 agent.observe(status)
-                            actions[p_key] = agent.get_action()
+                            
+                            # 봇 액션 가져오기
+                            a = agent.get_action()
+                            actions[p_key] = a
                         except Exception as e:
                             print(f"Error in Bot action: {e}")
             
+            # 모든 스레드 종료 대기
             for t in threads:
                 t.join()
 

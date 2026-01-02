@@ -39,6 +39,11 @@ class GameSettings(BaseSettings):
         Role.POLICE, Role.DOCTOR,
         Role.CITIZEN, Role.CITIZEN, Role.CITIZEN, Role.CITIZEN
     ]
+    MAX_DISCUSSION_ROUNDS: int = 2
+    
+    # Model & Env Dimensions
+    OBS_DIM: int = 78
+    ACTION_DIMS: List[int] = [9, 5]  # [Target(9), Role(5)]
 
 class TrainSettings(BaseSettings):
     LR: float = 0.0001
