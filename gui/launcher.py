@@ -360,6 +360,25 @@ class Launcher(QWidget):
                 self, "오류", "gui/gui_viewer.py 파일을 찾을 수 없습니다."
             )
 
+    def open_log_live(self):
+        """로그 뷰어 창 열기 (PyQt6 윈도우)"""
+        # 이전에 만든 gui_viewer.py의 클래스를 import
+        try:
+            from gui.gui_viewer import MafiaLogViewerWindow
+
+            self.log_window = MafiaLogViewerWindow()
+            self.log_window.show()
+            self.log_window.raise_()
+            self.log_window.activateWindow()
+
+            base_path = self.log_path_input.text()
+
+            self.log_window.show_live(base_path)
+        except ImportError:
+            QMessageBox.warning(
+                self, "오류", "gui/gui_viewer.py 파일을 찾을 수 없습니다."
+            )
+
     def on_click_start(self):
         """시뮬레이션 시작 버튼 클릭 - 개별 에이전트 설정 수집"""
 
@@ -381,6 +400,7 @@ class Launcher(QWidget):
             gui=True,
             paths=paths,
         )
+        self.open_log_live()
         self.start_simulation_signal.emit(args)
 
     def on_click_stop(self):

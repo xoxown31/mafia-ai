@@ -1,5 +1,5 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTabWidget
 from PyQt6.QtGui import QFont
 
 from .tabs.log_viewer import LogViewerTab
@@ -17,9 +17,12 @@ class MafiaLogViewerWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout()
         central_widget.setLayout(layout)
-        # 탭 추가
+
+        self.tab_widget = QTabWidget()
+        layout.addWidget(self.tab_widget)
+
         self.log_viewer_tab = LogViewerTab(self)
-        layout.addWidget(self.log_viewer_tab)
+        self.tab_widget.addTab(self.log_viewer_tab, "로그 뷰어")
 
     def _load_stylesheet(self):
         """styles.qss 파일을 읽어서 적용"""
@@ -34,6 +37,10 @@ class MafiaLogViewerWindow(QMainWindow):
                 print(f"Warning: Stylesheet file not found at {qss_path}")
         except Exception as e:
             print(f"Error loading stylesheet: {e}")
+
+    def show_live(self, log_path):
+        self.tab_widget.setCurrentWidget(self.log_viewer_tab)
+        self.log_viewer_tab.select_live(log_path)
 
 
 if __name__ == "__main__":
