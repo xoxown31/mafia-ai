@@ -98,6 +98,7 @@ class AgentConfigWidget(QGroupBox):
         config = {"type": self.type_combo.currentText().lower()}
         if config["type"] == "rl":
             config["algo"] = self.algo_combo.currentText().lower()
+            config["backbone"] = self.backbone_combo.currentText().lower()
             config["hidden_dim"] = self.hidden_dim_spin.value()
             config["num_layers"] = self.num_layers_spin.value()
         return config
