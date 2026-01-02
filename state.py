@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Optional, Union
-from config import Role, Phase, EventType, ActionType
+from config import Role, Phase, EventType
 
 
 class PlayerStatus(BaseModel):
@@ -8,7 +8,7 @@ class PlayerStatus(BaseModel):
     alive: bool
 
 
-class MafiaAction(BaseModel):
+class GameAction(BaseModel):
     """
     에이전트의 의도를 담은 액션 모델 (Agent → Engine)
     
@@ -23,7 +23,7 @@ class MafiaAction(BaseModel):
     """
     target_id: int = -1  # 기본값: 지목 없음
     claim_role: Optional[Role] = None  # 기본값: 주장 없음
-    
+
     def to_multi_discrete(self) -> List[int]:
         """Multi-Discrete 벡터로 변환: [target, role]"""
         # Target: -1 -> 0, 0~7 -> 1~8
@@ -35,7 +35,7 @@ class MafiaAction(BaseModel):
         return [target_val, role_val]
     
     @classmethod
-    def from_multi_discrete(cls, vector: List[int]) -> "MafiaAction":
+    def from_multi_discrete(cls, vector: List[int]) -> 'GameAction':
         """Multi-Discrete 벡터에서 생성: [target, role]"""
         target_val = vector[0]
         role_val = vector[1]
@@ -49,9 +49,10 @@ class MafiaAction(BaseModel):
 class GameEvent(BaseModel):
     """
     게임 엔진의 기록 (Engine → History)
-    
+
     EventType 규격을 공유하되, MafiaAction과 분리하여 관리
     """
+
     day: int
     phase: Phase
     event_type: EventType

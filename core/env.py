@@ -10,7 +10,7 @@ from pettingzoo.utils import parallel_to_aec, wrappers
 from core.game import MafiaGame
 from core.agent.baseAgent import BaseAgent
 from config import config, Role, Phase, EventType, ActionType
-from state import GameStatus, MafiaAction, PlayerStatus, GameEvent
+from state import GameStatus, GameAction, PlayerStatus, GameEvent
 
 class EnvAgent(BaseAgent):
     """
@@ -20,8 +20,8 @@ class EnvAgent(BaseAgent):
     def update_belief(self, history: List[GameEvent]):
         pass
 
-    def get_action(self) -> MafiaAction:
-        return MafiaAction(target_id=-1, claim_role=None)
+    def get_action(self) -> GameAction:
+        return GameAction(target_id=-1, claim_role=None)
 
 class MafiaEnv(ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "mafia_v1"}
@@ -78,8 +78,8 @@ class MafiaEnv(ParallelEnv):
         for agent_id, action in actions.items():
             pid = self._agent_to_id(agent_id)
             if isinstance(action, (list, np.ndarray)):
-                engine_actions[pid] = MafiaAction.from_multi_discrete(action)
-            elif isinstance(action, MafiaAction):
+                engine_actions[pid] = GameAction.from_multi_discrete(action)
+            elif isinstance(action, GameAction):
                 engine_actions[pid] = action
             else:
                 # Fallback or error
@@ -124,7 +124,7 @@ class MafiaEnv(ParallelEnv):
             Phase.DAY_DISCUSSION: "Discussion",
             Phase.DAY_VOTE: "Vote",
             Phase.DAY_EXECUTE: "Execute",
-            Phase.NIGHT: "Night"
+            Phase.NIGHT: "Night",
         }
         phase_str = phase_names.get(self.game.phase, str(self.game.phase))
         status = self.game.get_game_status()

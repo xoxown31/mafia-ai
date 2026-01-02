@@ -13,13 +13,7 @@ from core.runner import train, test
 
 from gui.launcher import Launcher
 
-# GUI 모듈 임포트 (gui 패키지가 없어도 에러 안 나게 처리)
-try:
-    from gui.gui_viewer import MafiaLogViewerApp
-
-    GUI_AVAILABLE = True
-except ImportError:
-    GUI_AVAILABLE = False
+STOP = threading.Event()  # 종료 신호
 
 
 def run_simulation(args):
@@ -42,11 +36,13 @@ def run_simulation(args):
             break
     
     # LogManager 초기화
-    log_dir = str(getattr(args, 'paths', {}).get('log_dir', 'logs'))
+    log_dir = str(getattr(args, "paths", {}).get("log_dir", "logs"))
     logger = LogManager(experiment_name=experiment_name, log_dir=log_dir)
-    
+
     print(f"Simulation started: {experiment_name}")
-    print(f"Player configurations: {player_configs if player_configs else 'Legacy mode'}")
+    print(
+        f"Player configurations: {player_configs if player_configs else 'Legacy mode'}"
+    )
 
     try:
         if player_configs is None:
@@ -120,11 +116,17 @@ def start_gui():
     launcher = Launcher()
 
     def on_simulation_start(args):
+        STOP.clear()
         sim_thread = threading.Thread(target=run_simulation, args=(args,), daemon=True)
         sim_thread.start()
 
+    def on_simulation_stop():
+        print("시뮬레이션 종료")
+        STOP.set()
+
     # 시그널 연결
     launcher.start_simulation_signal.connect(on_simulation_start)
+    launcher.stop_simulation_signal.connect(on_simulation_stop)
 
     launcher.show()
     sys.exit(app.exec())
