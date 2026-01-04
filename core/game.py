@@ -6,6 +6,7 @@ from state import GameStatus, GameEvent, PlayerStatus, GameAction
 from core.agent.llmAgent import LLMAgent
 from core.agent.baseAgent import BaseAgent
 from core.logger import LogManager
+from collections import Counter
 
 
 class MafiaGame:
@@ -31,7 +32,7 @@ class MafiaGame:
         self.discussion_round = 0
         self.history = []
         self._last_votes = []  # 투표 결과 초기화
-        
+
         # 에이전트 상태 초기화 (필요 시)
         # 외부에서 주입된 에이전트를 그대로 사용
 
@@ -55,13 +56,15 @@ class MafiaGame:
 
         return self.get_game_status()
 
-    def step_phase(self, actions: Dict[int, GameAction]) -> Tuple[GameStatus, bool, bool]:
+    def step_phase(
+        self, actions: Dict[int, GameAction]
+    ) -> Tuple[GameStatus, bool, bool]:
         """
         게임 페이즈 진행 - 외부에서 주입된 액션 처리
         단일 페이즈(Phase) 단위로 실행을 멈추고 제어권을 반환
         """
         is_over, is_win = self.check_game_over()
-        
+
         # 게임 종료 시 이벤트 기록 (중복 방지)
         if is_over:
             game_ended_before = any(e.phase == Phase.GAME_END for e in self.history)
@@ -111,7 +114,7 @@ class MafiaGame:
                 self.history.append(event)
                 if self.logger:
                     self.logger.log_event(event)
-        
+
         return self.get_game_status(), is_over, is_win
 
     def _process_discussion(self, actions: Dict[int, GameAction]) -> bool:
@@ -121,19 +124,19 @@ class MafiaGame:
             bool: 페이즈 종료 여부 (True면 다음 페이즈로)
         """
         alive_count = sum(1 for p in self.players if p.alive)
-        
+
         # 순차적 반영: 8명의 액션을 ID 순으로 루프를 돌며 하나씩 적용
         # 이는 각 액션을 GameEvent 시퀀스로 만들어 RNN Hidden State를 갱신하기 위함입니다.
         sorted_actions = sorted(actions.items(), key=lambda x: x[0])
-        
+
         pass_count = 0
         for player_id, action in sorted_actions:
             player = self.players[player_id]
             if not player.alive:
                 continue
-                
+
             # 1. PASS 처리
-            is_pass = (action.target_id == -1 and action.claim_role is None)
+            is_pass = action.target_id == -1 and action.claim_role is None
             if is_pass:
                 pass_count += 1
                 event = GameEvent(
@@ -141,9 +144,9 @@ class MafiaGame:
                     phase=self.phase,
                     event_type=EventType.CLAIM,
                     actor_id=player_id,
-                    value=None
+                    value=None,
                 )
-            
+
             # 2. CLAIM 처리
             elif action.claim_role is not None:
                 event = GameEvent(
@@ -152,29 +155,29 @@ class MafiaGame:
                     event_type=EventType.CLAIM,
                     actor_id=player_id,
                     target_id=action.target_id if action.target_id != -1 else None,
-                    value=action.claim_role
+                    value=action.claim_role,
                 )
-            
+
             # 3. TARGET_ACTION (토론 중 지목) 처리
             elif action.target_id != -1:
                 event = GameEvent(
                     day=self.day,
                     phase=self.phase,
-                    event_type=EventType.CLAIM, 
+                    event_type=EventType.CLAIM,
                     actor_id=player_id,
                     target_id=action.target_id,
-                    value=None
+                    value=None,
                 )
-            
+
             # 생성된 이벤트를 히스토리에 추가 및 로깅
             self.history.append(event)
             if self.logger:
                 self.logger.log_event(event)
-                
+
         # 토론 종료 조건 확인 (HEAD의 효율적 조건 사용)
         if pass_count >= alive_count * 0.5:
             return True
-            
+
         self.discussion_round += 1
         return self.discussion_round >= config.game.MAX_DISCUSSION_ROUNDS
 
@@ -183,7 +186,7 @@ class MafiaGame:
         투표 단계 처리 - 외부에서 주입된 액션 처리
         """
         votes = [0] * len(self.players)
-        
+
         # Phase 2: 모든 투표를 한 번에 처리
         for player_id, action in actions.items():
             target_id = action.target_id
@@ -214,7 +217,7 @@ class MafiaGame:
         for p in self.players:
             if p.alive:
                 p.observe(self.get_game_status(p.id))
-        
+
         return True
 
     def _process_execute(self, actions: Dict[int, GameAction]) -> bool:
@@ -223,7 +226,7 @@ class MafiaGame:
         """
         if not self._last_votes:
             return True
-        
+
         max_v = max(self._last_votes)
         execute_event = None
 
@@ -231,7 +234,7 @@ class MafiaGame:
             targets = [i for i, v in enumerate(self._last_votes) if v == max_v]
             if len(targets) == 1:
                 target_id = targets[0]
-                
+
                 # Phase 2: 모든 동의를 한 번에 처리
                 final_score = 0
                 for player_id, action in actions.items():
@@ -243,7 +246,7 @@ class MafiaGame:
                         # GameAction의 경우 target_id가 처형 대상과 일치하면 동의로 간주
                         if action.target_id == target_id:
                             final_score += 1
-                
+
                 success = final_score > 0
                 if success:
                     self.players[target_id].alive = False
@@ -260,12 +263,20 @@ class MafiaGame:
             else:
                 # 동점으로 처형 무산
                 execute_event = GameEvent(
-                    day=self.day, phase=self.phase, event_type=EventType.EXECUTE, actor_id=-1, target_id=-1
+                    day=self.day,
+                    phase=self.phase,
+                    event_type=EventType.EXECUTE,
+                    actor_id=-1,
+                    target_id=-1,
                 )
         else:
             # 득표자가 없어 처형 무산
             execute_event = GameEvent(
-                day=self.day, phase=self.phase, event_type=EventType.EXECUTE, actor_id=-1, target_id=-1
+                day=self.day,
+                phase=self.phase,
+                event_type=EventType.EXECUTE,
+                actor_id=-1,
+                target_id=-1,
             )
 
         # 이벤트 기록
@@ -275,7 +286,10 @@ class MafiaGame:
                 self.logger.log_event(execute_event)
 
             # 처형 성공 시에만 역할 공개 이벤트 추가
-            if execute_event.target_id != -1 and self.players[execute_event.target_id].alive is False:
+            if (
+                execute_event.target_id != -1
+                and self.players[execute_event.target_id].alive is False
+            ):
                 role_reveal_event = GameEvent(
                     day=self.day,
                     phase=self.phase,
@@ -292,105 +306,107 @@ class MafiaGame:
         for p in self.players:
             if p.alive:
                 p.observe(self.get_game_status(p.id))
-        
+
         return True
 
     def _process_night(self, actions: Dict[int, GameAction]) -> bool:
         """
-        밤 단계 처리 - 외부에서 주입된 액션 처리 및 유효성 검증
+        밤 단계 처리 - 마피아 투표 시스템 및 동점 시 무작위 선택 규칙 적용
         """
-        # 1. 역할별 행동 설정 매핑
-        role_config = {
-            Role.MAFIA: {"event_type": EventType.KILL, "value": None},
-            Role.DOCTOR: {"event_type": EventType.PROTECT, "value": None},
-            Role.POLICE: {
-                "event_type": EventType.POLICE_RESULT,
-                "value": "role_of_target",
-            },
-        }
 
-        # Phase 2: 모든 밤 행동을 한 번에 처리
         night_targets = {}
+        mafia_votes = []
+
+        # --- 1. 마피아 투표 수집 및 다른 역할 행동 분리 ---
+        other_role_actions = []
         for player_id, action in actions.items():
             p = self.players[player_id]
-            # 죽었거나 시민인 경우 밤 행동이 없음
-            if not p.alive or p.role == Role.CITIZEN:
-                continue
-            
-            role = p.role
-            target_id = action.target_id
-
-            # [유효성 검사 및 자동 보정 - 215727ed 로직 이식]
-            is_invalid_target = (
-                target_id is None
-                or not (0 <= target_id < len(self.players))
-                or not self.players[target_id].alive
-            )
-
-            # 역할별 특수 제약 조건 체크
-            if not is_invalid_target:
-                # 마피아는 동료 마피아를 지목할 수 없음
-                if role == Role.MAFIA and self.players[target_id].role == Role.MAFIA:
-                    is_invalid_target = True
-                # 경찰은 자기 자신을 조사할 수 없음
-                elif role == Role.POLICE and target_id == player_id:
-                    is_invalid_target = True
-
-            # 잘못된 타겟일 경우 유효한 후보 중 랜덤하게 선정
-            if is_invalid_target:
-                print(f"[Engine] Player {player_id} ({role.name}) returned invalid night target {target_id}. Assigning a random valid target.")
-                
-                valid_targets = []
-                if role == Role.MAFIA:
-                    valid_targets = [p_obj.id for p_obj in self.players if p_obj.alive and p_obj.role != Role.MAFIA]
-                elif role == Role.POLICE:
-                    valid_targets = [p_obj.id for p_obj in self.players if p_obj.alive and p_obj.id != player_id]
-                elif role == Role.DOCTOR:
-                    valid_targets = [p_obj.id for p_obj in self.players if p_obj.alive]
-
-                if valid_targets:
-                    target_id = random.choice(valid_targets)
-                    print(f"[Engine] Player {player_id} new target is {target_id}.")
-                else:
-                    continue # 마땅한 타겟이 없으면 스킵
-
-            # 역할별 설정 가져오기
-            role_config_item = role_config.get(role)
-            if not role_config_item:
+            if not p.alive:
                 continue
 
-            # 타겟 저장 (살해/보호 판정용)
-            night_targets[role] = target_id
+            # 마피아는 투표를 수집합니다.
+            if p.role == Role.MAFIA:
+                if action.target_id != -1 and self.players[action.target_id].alive:
+                    mafia_votes.append(action.target_id)
+            # 마피아와 시민이 아닌 다른 직업은 나중에 처리하기 위해 따로 저장합니다.
+            elif p.role != Role.CITIZEN:
+                other_role_actions.append((player_id, action))
 
-            # 이벤트 생성 및 기록
-            event_value = None
-            if role_config_item["value"] == "role_of_target":
-                event_value = self.players[target_id].role
+        # --- 2. 마피아 투표 집계 및 최종 타겟 결정 ---
+        if mafia_votes:
+            vote_counts = Counter(mafia_votes)
+            max_votes = vote_counts.most_common(1)[0][1]
+            top_targets = [p for p, v in vote_counts.items() if v == max_votes]
 
-            event = GameEvent(
+            # 동점이면 랜덤, 아니면 1명 선택
+            mafia_target = random.choice(top_targets)
+            night_targets[Role.MAFIA] = mafia_target
+
+            # 단일 KILL 이벤트 생성 및 기록
+            kill_event = GameEvent(
                 day=self.day,
                 phase=self.phase,
-                event_type=role_config_item["event_type"],
-                actor_id=player_id,
-                target_id=target_id,
-                value=event_value,
+                event_type=EventType.KILL,
+                actor_id=-1,  # 마피아 팀 전체의 행동으로 기록
+                target_id=mafia_target,
             )
-            self.history.append(event)
+            self.history.append(kill_event)
             if self.logger:
-                self.logger.log_event(event)
+                self.logger.log_event(kill_event)
 
-        # Phase 3: 살해 및 보호 처리 (동시 발생)
-        mafia_target = night_targets.get(Role.MAFIA)
+        # --- 3. 의사, 경찰 등 다른 직업 행동 처리 및 기록 ---
+        for player_id, action in other_role_actions:
+            role = self.players[player_id].role
+            target_id = action.target_id
+
+            # 유효성 검사 (예: 경찰은 자신을 조사할 수 없음)
+            if role == Role.POLICE and target_id == player_id:
+                continue  # 유효하지 않은 행동은 무시
+
+            # 대상이 유효한 생존자인 경우에만 처리
+            if (
+                target_id is not None
+                and 0 <= target_id < len(self.players)
+                and self.players[target_id].alive
+            ):
+                if role == Role.DOCTOR:
+                    night_targets[Role.DOCTOR] = target_id
+                    event = GameEvent(
+                        day=self.day,
+                        phase=self.phase,
+                        event_type=EventType.PROTECT,
+                        actor_id=player_id,
+                        target_id=target_id,
+                    )
+                    self.history.append(event)
+                    if self.logger:
+                        self.logger.log_event(event)
+
+                elif role == Role.POLICE:
+                    event = GameEvent(
+                        day=self.day,
+                        phase=self.phase,
+                        event_type=EventType.POLICE_RESULT,
+                        actor_id=player_id,
+                        target_id=target_id,
+                        value=self.players[target_id].role,
+                    )
+                    self.history.append(event)
+                    if self.logger:
+                        self.logger.log_event(event)
+
+        # --- 4. 최종 살해 및 보호 로직 ---
+        final_mafia_target = night_targets.get(Role.MAFIA)
         doctor_target = night_targets.get(Role.DOCTOR)
 
-        if mafia_target is not None and mafia_target != doctor_target:
-            self.players[mafia_target].alive = False
+        if final_mafia_target is not None and final_mafia_target != doctor_target:
+            self.players[final_mafia_target].alive = False
 
-        # Phase 4: 결과를 모두에게 공개
+        # --- 5. 결과 관찰 ---
         for p in self.players:
             if p.alive:
                 p.observe(self.get_game_status(p.id))
-        
+
         return True
 
     def get_game_status(self, viewer_id: Optional[int] = None) -> GameStatus:
