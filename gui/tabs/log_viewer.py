@@ -33,7 +33,6 @@ class LogEvent(GameEvent):
     episode: int = 1
 
 
-# === [좌측 패널] 로그 탐색기 위젯 ===
 class LogExplorerWidget(QWidget):
     log_selected = pyqtSignal(Path)
 
@@ -158,7 +157,6 @@ class LogContentWidget(QWidget):
         # Episode
         filter_layout.addWidget(QLabel("Episode:"))
         self.episode_combo = QComboBox()
-        self.episode_combo.addItem("전체")
         self.episode_combo.currentTextChanged.connect(self.apply_filter)
         filter_layout.addWidget(self.episode_combo)
 
@@ -218,7 +216,6 @@ class LogContentWidget(QWidget):
         episodes = sorted(list(set(e.episode for e in self.events)))
         self.episode_combo.blockSignals(True)
         self.episode_combo.clear()
-        self.episode_combo.addItem("전체")
         self.episode_combo.addItems([str(ep) for ep in episodes])
         self.episode_combo.blockSignals(False)
 
@@ -245,7 +242,10 @@ class LogContentWidget(QWidget):
         filtered = []
         for event in self.events:
             # Episode
-            if ep_filter != "전체" and event.episode != int(ep_filter):
+            try:
+                if event.episode != int(ep_filter):
+                    continue
+            except ValueError:
                 continue
             # Day
             if day_filter != "전체" and event.day != int(day_filter.split()[1]):
