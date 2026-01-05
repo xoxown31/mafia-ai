@@ -33,7 +33,7 @@ class LLMAgent(BaseAgent):
             api_key=os.getenv("UPSTAGE_API_KEY"),
             base_url="https://api.upstage.ai/v1/solar",
         )
-        self.model = "solar-mini"
+        self.model = "solar-pro"
 
         # Load prompts
         prompt_path = os.path.join(os.path.dirname(__file__), "prompts.yaml")
@@ -189,44 +189,57 @@ class LLMAgent(BaseAgent):
         # LLM 실행 및 JSON 응답 파싱
         action_dict = self._execute_ai_logic(prompt_key, status)
 
-        # --- 액션 유효성 검증 및 보정 ---
+        # 처형 단계에서는 GameAction으로 변환하지 않고, dict를 그대로 반환
+        if self.current_status.phase == Phase.DAY_EXECUTE:
+            return action_dict
+
+        # --- [수정된 부분] 액션 유효성 검증 및 보정 ---
         if self.current_status.phase in [Phase.NIGHT, Phase.DAY_VOTE]:
             target_id = action_dict.get("target_id")
-
             alive_players = [p.id for p in self.current_status.players if p.alive]
-            is_target_alive = target_id in alive_players
 
-            # 기본 유효성: 살아있는가?
-            if not is_target_alive:
+            is_valid = True
+            # 1. 살아있는 플레이어를 타겟했는가?
+            if target_id not in alive_players:
+                is_valid = False
+                print(f"[Player {self.id}] WARNING: LLM targeted non-survivor {target_id}. Overriding.")
 
-                # 대안: 살아있는 플레이어 중 무작위 선택 (자신 제외)
-                possible_targets = [p_id for p_id in alive_players if p_id != self.id]
-                if possible_targets:
-                    action_dict["target_id"] = random.choice(possible_targets)
-                else:  # 선택할 대상이 없으면 기권
-                    action_dict["target_id"] = -1
+            # 2. (투표 시) 자기 자신에게 투표했는가?
+            if self.current_status.phase == Phase.DAY_VOTE and target_id == self.id:
+                is_valid = False
+                print(f"[Player {self.id}] WARNING: LLM tried to vote for self. Overriding.")
 
-            # 역할별 추가 규칙 (경찰: 자신 조사 불가)
-            if self.role == Role.POLICE and action_dict["target_id"] == self.id:
-                possible_targets = [p_id for p_id in alive_players if p_id != self.id]
+            # 3. (경찰) 자기 자신을 조사했는가?
+            if self.role == Role.POLICE and self.current_status.phase == Phase.NIGHT and target_id == self.id:
+                is_valid = False
+                print(f"[Player {self.id}] WARNING: Police LLM tried to investigate self. Overriding.")
+
+            # 4. (마피아) 동료 또는 자신을 공격/투표했는가?
+            if self.role == Role.MAFIA:
+                # action_history에서 동료 마피아 정보를 올바르게 파싱
+                mafia_team = {self.id}
+                for event in self.current_status.action_history:
+                    if event.event_type == EventType.POLICE_RESULT and event.value == Role.MAFIA:
+                        mafia_team.add(event.target_id)
+                
+                if target_id in mafia_team:
+                    is_valid = False
+                    print(f"[Player {self.id}] WARNING: Mafia LLM targeted teammate {target_id}. Overriding.")
+            
+            # 유효하지 않은 액션일 경우, 안전한 타겟으로 강제 변경
+            if not is_valid:
+                # 재선택을 위한 후보 목록 준비 (기본: 자신 제외)
+                possible_targets = list(set(alive_players) - {self.id})
+
+                # 마피아일 경우, 동료도 후보에서 제외
+                if self.role == Role.MAFIA:
+                    possible_targets = list(set(possible_targets) - mafia_team)
+
+                # 선택 가능한 타겟이 있으면 무작위 선택, 없으면 기권
                 if possible_targets:
                     action_dict["target_id"] = random.choice(possible_targets)
                 else:
                     action_dict["target_id"] = -1
-
-            # 마피아: 동료 공격 불가
-            if self.role == Role.MAFIA:
-                mafia_team = [
-                    p.id for p in self.current_status.players if p.role == Role.MAFIA
-                ]
-                if action_dict["target_id"] in mafia_team:
-                    possible_targets = [
-                        p_id for p_id in alive_players if p_id not in mafia_team
-                    ]
-                    if possible_targets:
-                        action_dict["target_id"] = random.choice(possible_targets)
-                    else:
-                        action_dict["target_id"] = -1  # 공격할 대상이 없으면 기권
 
         return self.translate_to_engine(action_dict)
 

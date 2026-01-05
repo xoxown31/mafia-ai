@@ -12,6 +12,7 @@ from core.agents.base_agent import BaseAgent
 from config import config, Role, Phase, EventType, ActionType
 from core.engine.state import GameStatus, GameAction, PlayerStatus, GameEvent
 
+
 class EnvAgent(BaseAgent):
     """
     Environment internal agent placeholder to satisfy MafiaGame requirements.
@@ -19,6 +20,7 @@ class EnvAgent(BaseAgent):
     """
     def get_action(self, status: GameStatus) -> GameAction:
         return GameAction(target_id=-1, claim_role=None)
+
 
 class MafiaEnv(ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "mafia_v1"}
@@ -28,30 +30,38 @@ class MafiaEnv(ParallelEnv):
         self.agents = self.possible_agents[:]
         self.render_mode = render_mode
         self.logger = logger
-        
+
         # Create dummy agents for the engine
         # MafiaGame expects a list of BaseAgent instances
         self.internal_agents = [EnvAgent(i) for i in range(config.game.PLAYER_COUNT)]
         self.game = MafiaGame(agents=self.internal_agents, logger=logger)
-        
+
         # === [Multi-Discrete Action Space] ===
         # 형태: [Target, Role]
         # - Target: 0=None, 1~8=Player 0~7 (9개)
         # - Role: 0=None, 1~4=Role Enum (5개)
         self.action_spaces = {
-            agent: spaces.MultiDiscrete(config.game.ACTION_DIMS) for agent in self.possible_agents
+            agent: spaces.MultiDiscrete(config.game.ACTION_DIMS)
+            for agent in self.possible_agents
         }
-        
+
         # Observation Space: 78차원 슬림화
         # 자기 정보(12) + 게임 상황(4) + 주관적 신뢰도(32) + 직전 사건(30)
         obs_dim = config.game.OBS_DIM
         self.observation_spaces = {
-            agent: spaces.Dict({
-                "observation": spaces.Box(low=-1, high=1, shape=(obs_dim,), dtype=np.float32),
-                "action_mask": spaces.Box(low=0, high=1, shape=(14,), dtype=np.int8)
-            }) for agent in self.possible_agents
+            agent: spaces.Dict(
+                {
+                    "observation": spaces.Box(
+                        low=-1, high=1, shape=(obs_dim,), dtype=np.float32
+                    ),
+                    "action_mask": spaces.Box(
+                        low=0, high=1, shape=(14,), dtype=np.int8
+                    ),
+                }
+            )
+            for agent in self.possible_agents
         }
-        
+
         # 이전 턴의 투표 기록 저장 (삭제됨)
         # self.last_vote_record = np.zeros((config.game.PLAYER_COUNT, config.game.PLAYER_COUNT), dtype=np.float32)
 
@@ -60,13 +70,13 @@ class MafiaEnv(ParallelEnv):
         self.agents = self.possible_agents[:]
         self.game.reset()
         # self.last_vote_record = np.zeros((config.game.PLAYER_COUNT, config.game.PLAYER_COUNT), dtype=np.float32)
-        
+
         observations = {
             agent: self._encode_observation(self._agent_to_id(agent))
             for agent in self.agents
         }
         infos = {agent: {} for agent in self.agents}
-        
+
         return observations, infos
 
     def step(self, actions):
@@ -78,6 +88,8 @@ class MafiaEnv(ParallelEnv):
                 engine_actions[pid] = GameAction.from_multi_discrete(action)
             elif isinstance(action, GameAction):
                 engine_actions[pid] = action
+            elif isinstance(action, dict):
+                engine_actions[pid] = action
             else:
                 # Fallback or error
                 pass
@@ -88,7 +100,7 @@ class MafiaEnv(ParallelEnv):
 
         # 게임 진행
         status, is_over, is_win = self.game.step_phase(engine_actions)
-        
+
         observations = {}
         rewards = {}
         terminations = {}
@@ -100,7 +112,7 @@ class MafiaEnv(ParallelEnv):
             
             observations[agent] = {
                 "observation": self._encode_observation(pid),
-                "action_mask": self._get_action_mask(pid)
+                "action_mask": self._get_action_mask(pid),
             }
 
             if is_over:
@@ -142,22 +154,24 @@ class MafiaEnv(ParallelEnv):
 
     def _agent_to_id(self, agent_str):
         return int(agent_str.split("_")[1])
-    
+
     def _id_to_agent(self, agent_id):
         return f"player_{agent_id}"
 
     # === Helper Methods (Copied and adapted from previous implementation) ===
 
-    def _calculate_reward(self, agent_id, prev_alive, prev_phase, mafia_action, done, win):
+    def _calculate_reward(
+        self, agent_id, prev_alive, prev_phase, mafia_action, done, win
+    ):
         reward = 0.0
         agent = self.game.players[agent_id]
         role = agent.role
-        
+
         # 1. 승패 보상 (Sparse Reward)
         if done:
             is_mafia_team = role == Role.MAFIA
             my_win = (win and not is_mafia_team) or (not win and is_mafia_team)
-            
+
             if my_win:
                 reward += 10.0
             else:
@@ -171,9 +185,9 @@ class MafiaEnv(ParallelEnv):
 
         # 3. 역할 기반 행동 보상
         action_target = -1
-        if mafia_action:
+        if hasattr(mafia_action, "target_id"):
             action_target = mafia_action.target_id
-            
+
         if role == Role.CITIZEN:
             reward += self._calculate_citizen_reward(action_target, prev_phase)
         elif role == Role.MAFIA:
@@ -263,14 +277,16 @@ class MafiaEnv(ParallelEnv):
         return reward
 
     def _calculate_citizen_reward(self, action, phase):
-        if action == -1: return 0.0
+        if action == -1:
+            return 0.0
         reward = 0.0
         if 0 <= action < len(self.game.players):
             target = self.game.players[action]
             if phase == Phase.DAY_VOTE:
                 if target.role == Role.MAFIA:
                     reward += 15.0
-                    if not target.alive: reward += 10.0
+                    if not target.alive:
+                        reward += 10.0
                 elif target.role in [Role.POLICE, Role.DOCTOR]:
                     reward -= 8.0
                 elif target.role == Role.CITIZEN:
@@ -283,36 +299,44 @@ class MafiaEnv(ParallelEnv):
         return reward
 
     def _calculate_mafia_reward(self, action, phase):
-        if action == -1: return 0.0
+        if action == -1:
+            return 0.0
         reward = 0.0
         if 0 <= action < len(self.game.players):
             target = self.game.players[action]
             if phase == Phase.DAY_VOTE:
                 if target.role == Role.POLICE:
                     reward += 20.0
-                    if not target.alive: reward += 15.0
+                    if not target.alive:
+                        reward += 15.0
                 elif target.role == Role.DOCTOR:
                     reward += 15.0
-                    if not target.alive: reward += 10.0
+                    if not target.alive:
+                        reward += 10.0
                 elif target.role == Role.CITIZEN:
                     reward += 5.0
-                    if not target.alive: reward += 3.0
+                    if not target.alive:
+                        reward += 3.0
                 elif target.role == Role.MAFIA:
                     reward -= 25.0
             elif phase == Phase.NIGHT:
                 if target.role == Role.POLICE:
                     reward += 25.0
-                    if not target.alive: reward += 15.0
+                    if not target.alive:
+                        reward += 15.0
                 elif target.role == Role.DOCTOR:
                     reward += 18.0
-                    if not target.alive: reward += 12.0
+                    if not target.alive:
+                        reward += 12.0
                 elif target.role == Role.CITIZEN:
                     reward += 8.0
-                    if not target.alive: reward += 5.0
+                    if not target.alive:
+                        reward += 5.0
         return reward
 
     def _calculate_police_reward(self, action, phase):
-        if action == -1 or phase != Phase.NIGHT: return 0.0
+        if action == -1 or phase != Phase.NIGHT:
+            return 0.0
         reward = 0.0
         if 0 <= action < len(self.game.players):
             target = self.game.players[action]
@@ -323,7 +347,8 @@ class MafiaEnv(ParallelEnv):
         return reward
 
     def _calculate_doctor_reward(self, prev_alive, action, phase):
-        if action == -1 or phase != Phase.NIGHT: return 0.0
+        if action == -1 or phase != Phase.NIGHT:
+            return 0.0
         reward = 0.0
         current_alive_count = sum(p.alive for p in self.game.players)
         prev_alive_count = sum(prev_alive)
@@ -331,14 +356,19 @@ class MafiaEnv(ParallelEnv):
             reward += 25.0
             if 0 <= action < len(self.game.players):
                 target = self.game.players[action]
-                if target.role == Role.POLICE: reward += 15.0
-                elif target.role == Role.DOCTOR: reward += 10.0
-                elif target.role == Role.CITIZEN: reward += 5.0
+                if target.role == Role.POLICE:
+                    reward += 15.0
+                elif target.role == Role.DOCTOR:
+                    reward += 10.0
+                elif target.role == Role.CITIZEN:
+                    reward += 5.0
         else:
             reward += 1.0
         return reward
 
-    def _encode_observation(self, agent_id: int, target_event: Optional[GameEvent] = None) -> np.ndarray:
+    def _encode_observation(
+        self, agent_id: int, target_event: Optional[GameEvent] = None
+    ) -> np.ndarray:
         """
         46차원 관측 벡터 생성 (Belief Matrix 제거)
         target_event가 주어지면 해당 이벤트를 '직전 사건'으로 인코딩.
@@ -346,27 +376,27 @@ class MafiaEnv(ParallelEnv):
         """
         status = self.game.get_game_status(agent_id)
         agent = self.game.players[agent_id]
-        
+
         # 1. 자기 정보 (12)
         # ID One-hot (8)
         id_vec = np.zeros(8, dtype=np.float32)
         id_vec[agent_id] = 1.0
-        
+
         # Role One-hot (4)
         role_vec = np.zeros(4, dtype=np.float32)
         role_vec[int(status.my_role)] = 1.0
-        
+
         # 2. 게임 상황 (4)
         # Day (1) - 정규화 (최대 15일 가정)
         day_vec = np.array([status.day / 15.0], dtype=np.float32)
-        
+
         # Phase One-hot (3)
         phase_vec = np.zeros(3, dtype=np.float32)
         if status.phase == Phase.DAY_DISCUSSION:
             phase_vec[0] = 1.0
         elif status.phase == Phase.DAY_VOTE:
             phase_vec[1] = 1.0
-        else: # Execute or Night
+        else:  # Execute or Night
             phase_vec[2] = 1.0
             
         # 3. 직전 사건 (30)
@@ -374,7 +404,7 @@ class MafiaEnv(ParallelEnv):
         last_event = target_event
         if last_event is None and status.action_history:
             last_event = status.action_history[-1]
-            
+
         if last_event:
             # Actor ID (9): Player 0~7 + System(-1) -> Index 8
             actor_vec = np.zeros(9, dtype=np.float32)
@@ -382,14 +412,14 @@ class MafiaEnv(ParallelEnv):
                 actor_vec[8] = 1.0
             else:
                 actor_vec[last_event.actor_id] = 1.0
-                
+
             # Target ID (9): Player 0~7 + None -> Index 8
             target_vec = np.zeros(9, dtype=np.float32)
             if last_event.target_id is None or last_event.target_id == -1:
                 target_vec[8] = 1.0
             else:
                 target_vec[last_event.target_id] = 1.0
-                
+
             # Value/Role (5): Role 0~3 + None -> Index 4
             value_vec = np.zeros(5, dtype=np.float32)
             if last_event.value is None:
@@ -398,7 +428,7 @@ class MafiaEnv(ParallelEnv):
                 value_vec[int(last_event.value)] = 1.0
             else:
                 value_vec[4] = 1.0
-                
+
             # Event Type (7)
             type_vec = np.zeros(7, dtype=np.float32)
             try:
@@ -407,14 +437,17 @@ class MafiaEnv(ParallelEnv):
                     type_vec[t_idx] = 1.0
             except:
                 pass
-                
+
         else:
             # 이벤트 없음 (초기 상태)
-            actor_vec = np.zeros(9, dtype=np.float32); actor_vec[8] = 1.0 # System
-            target_vec = np.zeros(9, dtype=np.float32); target_vec[8] = 1.0 # None
-            value_vec = np.zeros(5, dtype=np.float32); value_vec[4] = 1.0 # None
-            type_vec = np.zeros(7, dtype=np.float32) # None type?
-        
+            actor_vec = np.zeros(9, dtype=np.float32)
+            actor_vec[8] = 1.0  # System
+            target_vec = np.zeros(9, dtype=np.float32)
+            target_vec[8] = 1.0  # None
+            value_vec = np.zeros(5, dtype=np.float32)
+            value_vec[4] = 1.0  # None
+            type_vec = np.zeros(7, dtype=np.float32)  # None type?
+
         # Concatenate all
         obs = np.concatenate([
             id_vec,      # 8
@@ -433,23 +466,23 @@ class MafiaEnv(ParallelEnv):
         # 기존 로직 활용 또는 단순화
         # Target(9) + Role(5) = 14
         mask = np.ones(14, dtype=np.int8)
-        
+
         status = self.game.get_game_status(agent_id)
         agent = self.game.players[agent_id]
-        
+
         if not agent.alive:
             return np.zeros(14, dtype=np.int8)
-            
+
         # Target Mask
         # 죽은 사람은 타겟 불가 (단, 의사는 죽은 사람 살리기 불가, 경찰은 죽은 사람 조사 불가 등 규칙에 따라)
         # 여기서는 간단히 죽은 사람 마스킹
         for i, p in enumerate(status.players):
             if not p.alive:
                 mask[i] = 0
-        
+
         # Role Mask
         # 시민은 Role Claim 외에 Role Action 불가? -> 여기서는 Role Claim 용도로만 Role Head 사용
         # Role Head는 Claim할 직업을 선택하는 것.
         # 0~3: Role, 4: None (Claim 안함)
-        
+
         return mask

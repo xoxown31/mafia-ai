@@ -1,6 +1,7 @@
 import sys
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTabWidget
 from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QIcon
 
 from .tabs.log_viewer import LogViewerTab
 from pathlib import Path
@@ -10,6 +11,10 @@ class MafiaLogViewerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Mafia AI 게임 로그 뷰어")
+        icon_path = Path(__file__).parent / "icon.jpg"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+
         self.resize(1100, 750)
         self._load_stylesheet()  # 폰트 설정
         # 중앙 위젯, 레이아웃 설정
