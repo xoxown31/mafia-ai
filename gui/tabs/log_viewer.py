@@ -140,9 +140,6 @@ class LogViewerTab(QWidget):
         self.is_monitoring = True
         self.path_label.setText(f"실시간 감시 중... ({base_path_str})")
 
-        # 1초마다 최신 로그를 확인하도록 타이머 시작
-        self.monitor_timer.start(1000)
-
         # 즉시 한 번 실행 (혹시 폴더가 이미 있을 수 있으니)
         self._monitor_update()
 
@@ -152,27 +149,35 @@ class LogViewerTab(QWidget):
             return
 
         try:
-            # 1. base_path 안의 하위 폴더들을 모두 찾음
             subdirs = [d for d in self.base_watch_dir.iterdir() if d.is_dir()]
             if not subdirs:
                 return
 
-            # 2. 가장 최근에 수정된 폴더 찾기 (방금 실행한 시뮬레이션 폴더)
             latest_dir = max(subdirs, key=lambda d: d.stat().st_mtime)
 
-            # 3. 새로운 폴더거나, 내용이 바뀌었으면 로드 진행
-            # (단순화를 위해 매번 로드 시도 -> _load_logs 내부에서 파일 읽음)
             self.current_log_dir = latest_dir
             self.path_label.setText(str(self.current_log_dir))
 
-            # 기존 _load_logs 함수를 재활용하여 파일 읽기
-            # (silent=True는 오류 메시지 박스를 계속 띄우지 않기 위함)
             self._load_logs(silent=True)
 
         except Exception as e:
             print(f"Monitoring error: {e}")
 
     def _load_logs(self, silent=False):
+        if self.base_watch_dir and self.base_watch_dir.exists():
+            try:
+                subdirs = [d for d in self.base_watch_dir.iterdir() if d.is_dir()]
+                if subdirs:
+                    latest_dir = max(subdirs, key=lambda d: d.stat().st_mtime)
+
+                    if self.current_log_dir != latest_dir:
+                        self.current_log_dir = latest_dir
+                        self.path_label.setText(str(self.current_log_dir))
+                        if not silent:
+                            print(f"최신 로그 폴더로 전환됨: {latest_dir.name}")
+            except Exception as e:
+                print(f"최신 폴더 검색 실패: {e}")
+
         if not self.current_log_dir:
             self._show_message("디렉토리를 먼저 선택해주세요.")
             return
@@ -300,7 +305,7 @@ class LogViewerTab(QWidget):
         color_map = {
             EventType.VOTE: "#ff6600",
             EventType.EXECUTE: "#cc0000",
-            EventType.KILL: "#990000",
+            EventType.KILL: "#FF00F2",
             EventType.PROTECT: "#009900",
             EventType.POLICE_RESULT: "#6ee2ff",
         }

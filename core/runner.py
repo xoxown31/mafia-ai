@@ -1,5 +1,5 @@
 import threading
-from typing import TYPE_CHECKING, Dict, Any, List
+from typing import TYPE_CHECKING, Dict, Any, List, Optional
 from core.agent.llmAgent import LLMAgent
 
 if TYPE_CHECKING:
@@ -13,7 +13,7 @@ def train(
     all_agents: Dict[int, Any],
     args,
     logger: "LogManager",
-    stop_event: threading.Event = None,
+    stop_event: Optional[threading.Event] = None,
 ):
     """
     학습 모드 실행 - 다중 에이전트 지원
@@ -218,10 +218,7 @@ def train(
 
 
 def test(
-    env,
-    all_agents: Dict[int, Any],
-    args,
-    stop_event: threading.Event = None,
+    env, all_agents: Dict[int, Any], args, stop_event: Optional[threading.Event] = None
 ):
     """테스트 모드 실행 - 다중 에이전트 지원"""
     print("Start Test Simulation...")
