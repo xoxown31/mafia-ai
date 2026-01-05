@@ -1,10 +1,12 @@
 import threading
 from typing import TYPE_CHECKING, Dict, Any, List, Optional
-from core.agent.llmAgent import LLMAgent
+from core.agents.llm_agent import LLMAgent
+from config import Role, EventType, Phase
+from core.managers.stats import StatsManager
 
 if TYPE_CHECKING:
-    from core.logger import LogManager
-    from core.agent.rlAgent import RLAgent
+    from core.managers.logger import LogManager
+    from core.agents.rl_agent import RLAgent
 
 
 def train(
@@ -39,9 +41,8 @@ def train(
     )
     print(f"Active RL Agents: {list(rl_agents.keys())}")
 
-    # 승률 계산을 위한 최근 승리 기록 (에이전트별)
-    recent_wins = {pid: [] for pid in rl_agents.keys()}
-    window_size = 100
+    # 통계 매니저 초기화
+    stats_manager = StatsManager()
 
     # Helper to convert int ID to string ID
     def id_to_agent(i):
@@ -91,9 +92,8 @@ def train(
                     # env가 제공하는 인터페이스를 사용해야 하지만, 현재 구조상 game 접근이 불가피함.
                     # 다만, env.agents에 있는 에이전트만 실행하므로 생존 여부는 확인됨.
                     status = env.game.get_game_status(player.id)
-                    player.observe(status)
-
-                    a = player.get_action()
+                    
+                    a = player.get_action(status)
                     with lock:
                         actions[p_key] = a
                 except Exception as e:
@@ -120,12 +120,10 @@ def train(
                     else:
                         try:
                             # 일반 봇도 상태 업데이트 필요할 수 있음
-                            if hasattr(agent, "observe"):
-                                status = env.game.get_game_status(pid)
-                                agent.observe(status)
-
+                            status = env.game.get_game_status(pid)
+                            
                             # 봇 액션 가져오기
-                            a = agent.get_action()
+                            a = agent.get_action(status)
                             actions[p_key] = a
                         except Exception as e:
                             print(f"Error in Bot action: {e}")
@@ -165,35 +163,33 @@ def train(
         if stop_event and stop_event.is_set():
             break
 
-        # 에피소드 종료 후 학습
+        # 에피소드 종료 후 학습 및 메트릭 수집
+        train_metrics = {"Mafia": {"loss": [], "entropy": []}, "Citizen": {"loss": [], "entropy": []}}
+        
         for agent in rl_agents.values():
             if hasattr(agent, "update"):
-                agent.update()
+                res = agent.update()
+                if res and isinstance(res, dict):
+                    role_key = "Mafia" if agent.role == Role.MAFIA else "Citizen"
+                    if "loss" in res:
+                        train_metrics[role_key]["loss"].append(res["loss"])
+                    if "entropy" in res:
+                        train_metrics[role_key]["entropy"].append(res["entropy"])
 
-        # 승률 및 로깅 (대표 에이전트 또는 전체)
-        metrics = {}
-        for pid in rl_agents.keys():
-            recent_wins[pid].append(1 if is_wins[pid] else 0)
-            if len(recent_wins[pid]) > window_size:
-                recent_wins[pid].pop(0)
-
-            win_rate = (
-                sum(recent_wins[pid]) / len(recent_wins[pid])
-                if recent_wins[pid]
-                else 0.0
-            )
-
-            # 개별 에이전트 메트릭 추가
-            metrics[f"Agent_{pid}/Reward"] = episode_rewards[pid]
-            metrics[f"Agent_{pid}/WinRate"] = win_rate
+        # StatsManager를 통해 통계 계산
+        metrics = stats_manager.calculate_stats(
+            env=env,
+            rl_agents=rl_agents,
+            all_agents=all_agents,
+            episode_rewards=episode_rewards,
+            is_wins=is_wins,
+            train_metrics=train_metrics
+        )
 
         # 대표 에이전트 (첫 번째) - 호환성 유지
         rep_pid = list(rl_agents.keys())[0]
-        rep_win_rate = (
-            sum(recent_wins[rep_pid]) / len(recent_wins[rep_pid])
-            if recent_wins[rep_pid]
-            else 0.0
-        )
+        # StatsManager에서 계산된 값 사용
+        rep_win_rate = metrics.get(f"Agent_{rep_pid}/Win_Rate", 0.0)
 
         logger.log_metrics(
             episode=episode,
@@ -207,11 +203,7 @@ def train(
             # 모든 에이전트 상태 출력
             log_str = f"[Training] Ep {episode:5d}"
             for pid in rl_agents.keys():
-                wr = (
-                    sum(recent_wins[pid]) / len(recent_wins[pid])
-                    if recent_wins[pid]
-                    else 0.0
-                )
+                wr = metrics.get(f"Agent_{pid}/Win_Rate", 0.0)
                 log_str += f" | Ag {pid} R:{episode_rewards[pid]:6.2f} W:{wr*100:3.0f}%"
             print(log_str)
 
@@ -264,11 +256,8 @@ def test(
             # LLM / Bot Agent
             else:
                 # Update status
-                if hasattr(agent, "observe"):
-                    status = env.game.get_game_status(pid)
-                    agent.observe(status)
-
-                actions[agent_key] = agent.get_action()
+                status = env.game.get_game_status(pid)
+                actions[agent_key] = agent.get_action(status)
 
         next_obs_dict, rewards, terminations, truncations, infos = env.step(actions)
 

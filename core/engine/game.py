@@ -2,10 +2,10 @@ from typing import List, Dict, Tuple, Optional
 import random
 import json
 from config import config, Role, Phase, EventType, ActionType
-from state import GameStatus, GameEvent, PlayerStatus, GameAction
-from core.agent.llmAgent import LLMAgent
-from core.agent.baseAgent import BaseAgent
-from core.logger import LogManager
+from core.engine.state import GameStatus, GameEvent, PlayerStatus, GameAction
+from core.agents.llm_agent import LLMAgent
+from core.agents.base_agent import BaseAgent
+from core.managers.logger import LogManager
 from collections import Counter
 
 
@@ -41,6 +41,7 @@ class MafiaGame:
         random.shuffle(roles)
         for p, r in zip(self.players, roles):
             p.role = r
+            p.vote_count = 0  # 투표 수 초기화
             p.alive = True
             # 역할 할당 이벤트 로깅
             if self.logger:
@@ -194,7 +195,11 @@ class MafiaGame:
             if self.players[player_id].alive
         }
         votes = [0] * len(self.players)
-
+        
+        # 투표 수 초기화 (보상 계산 안전성 확보)
+        for p in self.players:
+            p.vote_count = 0
+        
         # Phase 2: 모든 투표를 한 번에 처리
         for player_id, action in filtered_actions.items():
             target_id = action.target_id
@@ -218,14 +223,11 @@ class MafiaGame:
                 and self.players[target_id].alive
             ):
                 votes[target_id] += 1
+                self.players[target_id].vote_count += 1
 
         self._last_votes = votes
 
-        # Phase 3: 결과를 모두에게 공개
-        for p in self.players:
-            if p.alive:
-                p.observe(self.get_game_status(p.id))
-
+        
         return True
 
     def _process_execute(self, actions: Dict[int, GameAction]) -> bool:
@@ -315,11 +317,7 @@ class MafiaGame:
                 if self.logger:
                     self.logger.log_event(role_reveal_event)
 
-        # Phase 3: 결과를 모두에게 공개
-        for p in self.players:
-            if p.alive:
-                p.observe(self.get_game_status(p.id))
-
+        
         return True
 
     def _process_night(self, actions: Dict[int, GameAction]) -> bool:
@@ -414,12 +412,7 @@ class MafiaGame:
 
         if final_mafia_target is not None and final_mafia_target != doctor_target:
             self.players[final_mafia_target].alive = False
-
-        # --- 5. 결과 관찰 ---
-        for p in self.players:
-            if p.alive:
-                p.observe(self.get_game_status(p.id))
-
+        
         return True
 
     def get_game_status(self, viewer_id: Optional[int] = None) -> GameStatus:
@@ -475,13 +468,27 @@ class MafiaGame:
             action_history=filtered,
         )
 
-    def check_game_over(self) -> Tuple[bool, bool]:
+    def check_game_over(self, player_id: Optional[int] = None) -> Tuple[bool, bool]:
+        """
+        게임 종료 여부 및 승패 확인
+        """
         m_count = sum(1 for p in self.players if p.role == Role.MAFIA and p.alive)
         c_count = sum(1 for p in self.players if p.role != Role.MAFIA and p.alive)
-        if self.day > config.game.MAX_DAYS:
-            return True, False
-        if m_count == 0:
-            return True, True
-        if m_count >= c_count:
-            return True, False
+        
+        termination_rules = [
+            (self.day > config.game.MAX_DAYS, False), # 1. 턴 초과 (마피아 승)
+            (m_count == 0,                   True),   # 2. 마피아 전멸 (시민 승)
+            (m_count >= c_count,             False)   # 3. 마피아 과반 (마피아 승)
+        ]
+        
+        for condition, citizen_win in termination_rules:
+            if condition:
+                if player_id is None:
+                    return True, citizen_win
+                
+                is_mafia_team = (self.players[player_id].role == Role.MAFIA)
+                my_win = (citizen_win != is_mafia_team)
+                
+                return True, my_win
+
         return False, False

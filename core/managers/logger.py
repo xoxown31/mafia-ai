@@ -16,7 +16,7 @@ from pathlib import Path
 
 from torch.utils.tensorboard import SummaryWriter
 
-from state import GameEvent
+from core.engine.state import GameEvent
 from config import Role, Phase, EventType
 
 

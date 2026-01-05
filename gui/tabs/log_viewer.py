@@ -22,9 +22,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QDir
 from PyQt6.QtGui import QFileSystemModel
 
-from state import GameEvent
+from core.engine.state import GameEvent
 from config import Role, Phase, EventType
-from core.logger import LogManager
+from core.managers.logger import LogManager
 
 
 class LogEvent(GameEvent):

@@ -102,7 +102,7 @@ class PPO:
 
     def update(self, il_loss_fn=None):
         if len(self.buffer.rewards) == 0:
-            return
+            return {}
             
         rewards = []
         discounted_reward = 0
@@ -134,8 +134,12 @@ class PPO:
             ep_logprobs_list = self._split_episodes(self.buffer.logprobs, self.buffer.is_terminals)
             ep_rewards_list = self._split_episodes(rewards, self.buffer.is_terminals)
         
+        avg_loss_all_epochs = 0
+        avg_entropy_all_epochs = 0
+
         for _ in range(self.k_epochs):
             total_loss = 0
+            total_entropy = 0
             self.optimizer.zero_grad()
             
             for i in range(len(ep_states_list)):
@@ -170,15 +174,26 @@ class PPO:
                 
                 loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, ep_rewards) - self.entropy_coef * dist_entropy
                 total_loss += loss.mean()
+                total_entropy += dist_entropy.mean()
             
             if len(ep_states_list) > 0:
                 avg_loss = total_loss / len(ep_states_list)
+                avg_entropy = total_entropy / len(ep_states_list)
+
                 avg_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.optimizer.step()
+
+                avg_loss_all_epochs += avg_loss.item()
+                avg_entropy_all_epochs += avg_entropy.item()
             
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.buffer.clear()
+
+        return {
+            "loss": avg_loss_all_epochs / self.k_epochs if self.k_epochs > 0 else 0,
+            "entropy": avg_entropy_all_epochs / self.k_epochs if self.k_epochs > 0 else 0
+        }
     
     def _split_episodes(self, data_list, is_terminals):
         """에피소드 경계에 따라 데이터를 분리"""
