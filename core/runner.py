@@ -55,8 +55,6 @@ def train(
         if hasattr(env, "game") and env.game.logger:
             env.game.logger.set_episode(episode)
 
-        obs_dict, _ = env.reset()
-
         # RNN 은닉 상태 초기화
         for agent in rl_agents.values():
             if hasattr(agent, "reset_hidden"):
