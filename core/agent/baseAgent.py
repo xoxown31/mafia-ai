@@ -42,6 +42,8 @@ class BaseAgent(ABC):
     def observe(self, status: GameStatus):
         """정보를 수신하는 유일한 입구"""
         self.current_status = status
+        if status.my_role:
+            self.role = status.my_role
         self.update_belief(status.action_history)
 
     @abstractmethod
