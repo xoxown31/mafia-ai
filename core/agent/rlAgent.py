@@ -127,7 +127,7 @@ class RLAgent(BaseAgent):
     
     def update(self):
         """학습 수행 - 알고리즘 객체에 위임"""
-        self.learner.update()
+        return self.learner.update()
 
     def save(self, filepath: str):
         """모델 저장"""
