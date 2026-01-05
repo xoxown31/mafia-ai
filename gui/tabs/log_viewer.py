@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QGroupBox,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 from state import GameEvent
 from config import Role, Phase, EventType
@@ -29,6 +29,11 @@ class LogViewerTab(QWidget):
         self.current_log_dir: Optional[Path] = None
         self.events: List[GameEvent] = []
         self.log_manager: Optional[LogManager] = None
+
+        self.base_watch_dir = None
+        self.is_monitoring = False
+        self.monitor_timer = QTimer(self)
+        self.monitor_timer.timeout.connect(self._monitor_update)
 
         self._setup_ui()
 
@@ -125,14 +130,62 @@ class LogViewerTab(QWidget):
             self.path_label.setText(str(self.current_log_dir))
             self._load_logs()
 
-    def _load_logs(self):
+    def select_live(self, base_path_str):
+        self.base_watch_dir = Path(base_path_str)
+
+        if not self.base_watch_dir.exists():
+            self._show_message(f"경로를 찾을 수 없음: {base_path_str}")
+            return
+
+        self.is_monitoring = True
+        self.path_label.setText(f"실시간 감시 중... ({base_path_str})")
+
+        # 즉시 한 번 실행 (혹시 폴더가 이미 있을 수 있으니)
+        self._monitor_update()
+
+    def _monitor_update(self):
+        """폴더 내 가장 최신 로그 디렉토리를 찾아 로드"""
+        if not self.base_watch_dir:
+            return
+
+        try:
+            subdirs = [d for d in self.base_watch_dir.iterdir() if d.is_dir()]
+            if not subdirs:
+                return
+
+            latest_dir = max(subdirs, key=lambda d: d.stat().st_mtime)
+
+            self.current_log_dir = latest_dir
+            self.path_label.setText(str(self.current_log_dir))
+
+            self._load_logs(silent=True)
+
+        except Exception as e:
+            print(f"Monitoring error: {e}")
+
+    def _load_logs(self, silent=False):
+        if self.base_watch_dir and self.base_watch_dir.exists():
+            try:
+                subdirs = [d for d in self.base_watch_dir.iterdir() if d.is_dir()]
+                if subdirs:
+                    latest_dir = max(subdirs, key=lambda d: d.stat().st_mtime)
+
+                    if self.current_log_dir != latest_dir:
+                        self.current_log_dir = latest_dir
+                        self.path_label.setText(str(self.current_log_dir))
+                        if not silent:
+                            print(f"최신 로그 폴더로 전환됨: {latest_dir.name}")
+            except Exception as e:
+                print(f"최신 폴더 검색 실패: {e}")
+
         if not self.current_log_dir:
             self._show_message("디렉토리를 먼저 선택해주세요.")
             return
 
         jsonl_path = self.current_log_dir / "events.jsonl"
         if not jsonl_path.exists():
-            self._show_message(f"events.jsonl 파일을 찾을 수 없습니다: {jsonl_path}")
+            if not silent:
+                self._show_message("아직 로그 파일이 생성되지 않았습니다.")
             return
 
         # LogManager 초기화
@@ -159,6 +212,11 @@ class LogViewerTab(QWidget):
         except Exception as e:
             self._show_message(f"로그 로드 실패: {e}")
             return
+
+        if self.is_monitoring:
+            self.log_text.verticalScrollBar().setValue(
+                self.log_text.verticalScrollBar().maximum()
+            )
 
         # Day 필터 옵션 업데이트
         days = sorted(set(e.day for e in self.events))
@@ -247,7 +305,7 @@ class LogViewerTab(QWidget):
         color_map = {
             EventType.VOTE: "#ff6600",
             EventType.EXECUTE: "#cc0000",
-            EventType.KILL: "#990000",
+            EventType.KILL: "#FF00F2",
             EventType.PROTECT: "#009900",
             EventType.POLICE_RESULT: "#6ee2ff",
         }

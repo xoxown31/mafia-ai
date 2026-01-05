@@ -22,7 +22,7 @@ from pathlib import Path
 
 class AgentConfigWidget(QGroupBox):
     """각 플레이어(0~7)를 개별 설정하는 위젯"""
-    
+
     typeChanged = pyqtSignal()
 
     def __init__(self, player_id):
@@ -56,13 +56,13 @@ class AgentConfigWidget(QGroupBox):
         self.algo_combo = QComboBox()
         self.algo_combo.addItems(["PPO", "REINFORCE"])
         rl_layout.addWidget(self.algo_combo)
-        
+
         # 백본 선택
         rl_layout.addWidget(QLabel("Backbone:"))
         self.backbone_combo = QComboBox()
         self.backbone_combo.addItems(["LSTM", "GRU"])
         rl_layout.addWidget(self.backbone_combo)
-        
+
         # 은닉층 차원
         rl_layout.addWidget(QLabel("Hidden Dim:"))
         self.hidden_dim_spin = QSpinBox()
@@ -84,7 +84,7 @@ class AgentConfigWidget(QGroupBox):
         self._toggle_rl_area(self.type_combo.currentText())
 
         self.layout.addStretch()
-    
+
     def _on_type_changed(self, text):
         self._toggle_rl_area(text)
         self.typeChanged.emit()
@@ -102,8 +102,15 @@ class AgentConfigWidget(QGroupBox):
             config["hidden_dim"] = self.hidden_dim_spin.value()
             config["num_layers"] = self.num_layers_spin.value()
         return config
-    
-    def set_config(self, agent_type="LLM", algo="PPO", backbone="LSTM", hidden_dim=128, num_layers=2):
+
+    def set_config(
+        self,
+        agent_type="LLM",
+        algo="PPO",
+        backbone="LSTM",
+        hidden_dim=128,
+        num_layers=2,
+    ):
         """외부에서 설정을 일괄 적용할 때 사용"""
         self.type_combo.setCurrentText(agent_type.upper())
         if agent_type.upper() == "RL":
@@ -250,7 +257,6 @@ class Launcher(QWidget):
         self.btn_stop = QPushButton("중지")
         self.btn_stop.clicked.connect(self.on_click_stop)
         self.btn_stop.setObjectName("StopBtn")
-        self.btn_stop.setEnabled(False)
         layout.addWidget(self.btn_stop)
 
         self.right_panel = QGroupBox("개별 에이전트 설정 (8명)")
@@ -285,7 +291,7 @@ class Launcher(QWidget):
 
         self.main_layout.addWidget(self.left_widget)
         self.main_layout.addWidget(self.right_panel)
-        
+
         # 초기 상태 업데이트
         self.update_mode_visibility()
 
@@ -297,8 +303,7 @@ class Launcher(QWidget):
         else:
             self.right_panel.setVisible(False)
             self.resize(450, 600)  # 패널 닫힐 때 크기
-            self.adjustSize()
-    
+
     def update_mode_visibility(self):
         """RL 에이전트 존재 여부에 따라 실행 모드 박스 표시/숨김"""
         has_rl_agent = False
@@ -306,9 +311,9 @@ class Launcher(QWidget):
             if widget.get_config()["type"] == "rl":
                 has_rl_agent = True
                 break
-        
+
         self.mode_group.setVisible(has_rl_agent)
-        
+
         # RL 에이전트가 없으면 강제로 Test 모드로 전환
         if not has_rl_agent:
             self.radio_test.setChecked(True)
@@ -319,9 +324,9 @@ class Launcher(QWidget):
 
         for widget in self.agent_config_widgets:
             widget.set_config(agent_type=agent_type)
-        
+
         self.update_mode_visibility()
-        
+
         QMessageBox.information(
             self, "설정 적용 완료", f"모든 플레이어를 {agent_type}로 설정했습니다."
         )
@@ -355,6 +360,25 @@ class Launcher(QWidget):
                 self, "오류", "gui/gui_viewer.py 파일을 찾을 수 없습니다."
             )
 
+    def open_log_live(self):
+        """로그 뷰어 창 열기 (PyQt6 윈도우)"""
+        # 이전에 만든 gui_viewer.py의 클래스를 import
+        try:
+            from gui.gui_viewer import MafiaLogViewerWindow
+
+            self.log_window = MafiaLogViewerWindow()
+            self.log_window.show()
+            self.log_window.raise_()
+            self.log_window.activateWindow()
+
+            base_path = self.log_path_input.text()
+
+            self.log_window.show_live(base_path)
+        except ImportError:
+            QMessageBox.warning(
+                self, "오류", "gui/gui_viewer.py 파일을 찾을 수 없습니다."
+            )
+
     def on_click_start(self):
         """시뮬레이션 시작 버튼 클릭 - 개별 에이전트 설정 수집"""
 
@@ -376,17 +400,11 @@ class Launcher(QWidget):
             gui=True,
             paths=paths,
         )
-        self.set_btn(False)
+        self.open_log_live()
         self.start_simulation_signal.emit(args)
 
     def on_click_stop(self):
-        self.set_btn(True)
         self.stop_simulation_signal.emit()
-
-    # 추후에 시뮬레이션 종료시 버튼 복구 기능 추가 구현
-    def set_btn(self, run):
-        self.btn_start.setEnabled(run)
-        self.btn_stop.setEnabled(not run)
 
     def _load_stylesheet(self):
         """styles.qss 파일을 읽어서 적용"""

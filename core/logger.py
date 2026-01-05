@@ -29,6 +29,7 @@ class LogManager:
         log_dir: str = "./logs",
         use_tensorboard: bool = True,
         write_mode: bool = True,
+        overwrite: bool = False,
     ):
         """
         Args:
@@ -40,6 +41,7 @@ class LogManager:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.use_tensorboard = use_tensorboard and write_mode
+        self.current_episode = 1
 
         self.narrative_templates = self._load_narrative_templates()
 
@@ -95,11 +97,22 @@ class LogManager:
 
         return default_templates
 
+    def set_episode(self, episode: int):
+        self.current_episode = episode
+
     def log_event(self, event: GameEvent):
         """GameEvent를 JSONL 형식으로 기록"""
-        event_json = event.model_dump_json(exclude_none=False)
-        self.jsonl_file.write(event_json + "\n")
-        self.jsonl_file.flush()
+        if self.jsonl_file:
+            # 1. 이벤트를 딕셔너리로 변환
+            # (Pydantic v2는 model_dump(), v1은 dict() 사용. 안전하게 dict() 권장)
+            data = event.dict() if hasattr(event, "dict") else event.model_dump()
+
+            # 2. [핵심] 딕셔너리에 episode 필드 강제 주입
+            data["episode"] = self.current_episode
+
+            # 3. 파일 쓰기
+            self.jsonl_file.write(json.dumps(data, ensure_ascii=False) + "\n")
+            self.jsonl_file.flush()
 
     def log_metrics(
         self,
