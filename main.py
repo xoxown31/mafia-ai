@@ -30,9 +30,9 @@ def run_simulation(args):
 
     # Player 0의 설정으로 실험 이름 생성 -> 첫 번째 RL 에이전트 기준
     experiment_name = f"llm_{args.mode}" # 기본값
-    for config in player_configs:
-        if config['type'] == 'rl':
-            experiment_name = f"{config['algo']}_{config['backbone']}_{args.mode}"
+    for p_config in player_configs:
+        if p_config['type'] == 'rl':
+            experiment_name = f"{p_config['algo']}_{p_config['backbone']}_{args.mode}"
             break
     
     # LogManager 초기화
