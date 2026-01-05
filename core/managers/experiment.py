@@ -41,7 +41,7 @@ class ExperimentManager:
                     player_id=i,
                     role=Role.CITIZEN,
                     state_dim=state_dim,
-                    action_dims=[9, 5],
+                    action_dims=config.game.ACTION_DIMS,
                     algorithm=p_config['algo'],
                     backbone=p_config['backbone'],
                     hidden_dim=p_config.get('hidden_dim', 128),
