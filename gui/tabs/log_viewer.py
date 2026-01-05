@@ -21,13 +21,18 @@ from config import Role, Phase, EventType
 from core.logger import LogManager
 
 
+# state.py 수정 없이 episode 필드를 인식하기 위한 확장 클래스 정의
+class LogEvent(GameEvent):
+    episode: int = 1  # 기본값 설정 (로그에 없어도 에러 안 남)
+
+
 class LogViewerTab(QWidget):
     """게임 로그를 자연어로 표시하는 탭 (PyQt6)"""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.current_log_dir: Optional[Path] = None
-        self.events: List[GameEvent] = []
+        self.events: List[LogEvent] = []  # LOogEvent는 GameEvent 자식
         self.log_manager: Optional[LogManager] = None
 
         self.base_watch_dir = None
@@ -42,32 +47,34 @@ class LogViewerTab(QWidget):
         layout = QVBoxLayout()
         self.setLayout(layout)
 
-        # === 1. 상단: 디렉토리 선택 영역 ===
+        # ... (상단 디렉토리 선택 영역 - 기존과 동일) ...
         top_frame = QWidget()
         top_layout = QHBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_frame.setLayout(top_layout)
-
         top_layout.addWidget(QLabel("로그 디렉토리:"))
-
         self.path_label = QLabel("선택된 디렉토리 없음")
         self.path_label.setFrameStyle(QLabel.Shape.Panel | QLabel.Shadow.Sunken)
         top_layout.addWidget(self.path_label, stretch=1)
-
         btn_select = QPushButton("디렉토리 선택")
         btn_select.clicked.connect(self._select_directory)
         top_layout.addWidget(btn_select)
-
         btn_refresh = QPushButton("새로고침")
         btn_refresh.clicked.connect(self._load_logs)
         top_layout.addWidget(btn_refresh)
-
         layout.addWidget(top_frame)
 
         # === 2. 필터 프레임 ===
         filter_group = QGroupBox("필터")
         filter_layout = QHBoxLayout()
         filter_group.setLayout(filter_layout)
+
+        # Episode 필터
+        filter_layout.addWidget(QLabel("Episode:"))
+        self.episode_combo = QComboBox()
+        self.episode_combo.addItem("전체")
+        self.episode_combo.currentTextChanged.connect(self._apply_filter)
+        filter_layout.addWidget(self.episode_combo)
 
         # Day 필터
         filter_layout.addWidget(QLabel("Day:"))
@@ -95,71 +102,58 @@ class LogViewerTab(QWidget):
         filter_layout.addStretch()
         layout.addWidget(filter_group)
 
-        # === 3. 중앙: 로그 표시 영역 ===
+        # ... (로그 표시 영역 및 하단 통계 - 기존과 동일) ...
         log_group = QGroupBox("게임 이벤트 로그")
         log_layout = QVBoxLayout()
         log_group.setLayout(log_layout)
-
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        # 폰트 설정
         self.log_text.setStyleSheet(
             "font-family: '맑은 고딕', 'Malgun Gothic'; font-size: 13px;"
         )
         log_layout.addWidget(self.log_text)
-
         layout.addWidget(log_group, stretch=1)
 
-        # === 4. 하단: 통계 정보 ===
         stats_group = QGroupBox("통계")
         stats_layout = QVBoxLayout()
         stats_group.setLayout(stats_layout)
-
         self.stats_label = QLabel("이벤트 로드되지 않음")
         stats_layout.addWidget(self.stats_label)
-
         layout.addWidget(stats_group)
 
     def _select_directory(self):
+        # ... (기존 코드 동일) ...
         directory = QFileDialog.getExistingDirectory(
             self, "로그 디렉토리 선택", "./logs"
         )
-
         if directory:
             self.current_log_dir = Path(directory)
             self.path_label.setText(str(self.current_log_dir))
             self._load_logs()
 
     def select_live(self, base_path_str):
+        # ... (기존 코드 동일) ...
         self.base_watch_dir = Path(base_path_str)
-
         if not self.base_watch_dir.exists():
             self._show_message(f"경로를 찾을 수 없음: {base_path_str}")
             return
-
         self.is_monitoring = True
         self.path_label.setText(f"실시간 감시 중... ({base_path_str})")
-
-        # 즉시 한 번 실행 (혹시 폴더가 이미 있을 수 있으니)
+        self.monitor_timer.start(1000)
         self._monitor_update()
 
     def _monitor_update(self):
-        """폴더 내 가장 최신 로그 디렉토리를 찾아 로드"""
+        # ... (기존 코드 동일) ...
         if not self.base_watch_dir:
             return
-
         try:
             subdirs = [d for d in self.base_watch_dir.iterdir() if d.is_dir()]
             if not subdirs:
                 return
-
             latest_dir = max(subdirs, key=lambda d: d.stat().st_mtime)
-
             self.current_log_dir = latest_dir
             self.path_label.setText(str(self.current_log_dir))
-
             self._load_logs(silent=True)
-
         except Exception as e:
             print(f"Monitoring error: {e}")
 
@@ -169,12 +163,9 @@ class LogViewerTab(QWidget):
                 subdirs = [d for d in self.base_watch_dir.iterdir() if d.is_dir()]
                 if subdirs:
                     latest_dir = max(subdirs, key=lambda d: d.stat().st_mtime)
-
                     if self.current_log_dir != latest_dir:
                         self.current_log_dir = latest_dir
                         self.path_label.setText(str(self.current_log_dir))
-                        if not silent:
-                            print(f"최신 로그 폴더로 전환됨: {latest_dir.name}")
             except Exception as e:
                 print(f"최신 폴더 검색 실패: {e}")
 
@@ -188,7 +179,6 @@ class LogViewerTab(QWidget):
                 self._show_message("아직 로그 파일이 생성되지 않았습니다.")
             return
 
-        # LogManager 초기화
         try:
             self.log_manager = LogManager(
                 experiment_name="viewer",
@@ -200,16 +190,18 @@ class LogViewerTab(QWidget):
             print(f"LogManager 초기화 실패: {e}")
             self.log_manager = None
 
-        # JSONL 파싱
+        # JSONL 파싱 시 LogEvent 사용
         self.events = []
         try:
             with open(jsonl_path, "r", encoding="utf-8") as f:
                 for line in f:
                     if line.strip():
                         data = json.loads(line)
-                        event = GameEvent(**data)
+                        # 중요: GameEvent 대신 LogEvent를 사용해야 episode 필드가 보존됩니다.
+                        event = LogEvent(**data)
                         self.events.append(event)
         except Exception as e:
+            print(f"상세 에러: {e}")  # 디버깅용 출력
             self._show_message(f"로그 로드 실패: {e}")
             return
 
@@ -218,9 +210,17 @@ class LogViewerTab(QWidget):
                 self.log_text.verticalScrollBar().maximum()
             )
 
+        # Episode 필터 옵션 업데이트
+        episodes = sorted(list(set(e.episode for e in self.events)))
+        self.episode_combo.blockSignals(True)
+        self.episode_combo.clear()
+        self.episode_combo.addItem("전체")
+        self.episode_combo.addItems([str(ep) for ep in episodes])
+        self.episode_combo.blockSignals(False)
+
         # Day 필터 옵션 업데이트
         days = sorted(set(e.day for e in self.events))
-        self.day_combo.blockSignals(True)  # 시그널 잠시 차단
+        self.day_combo.blockSignals(True)
         self.day_combo.clear()
         self.day_combo.addItem("전체")
         self.day_combo.addItems([f"Day {d}" for d in days])
@@ -228,30 +228,32 @@ class LogViewerTab(QWidget):
 
         self._apply_filter()
 
-    # 로그 표시
     def _apply_filter(self):
         if not self.events:
             return
 
+        ep_filter = self.episode_combo.currentText()
         day_filter = self.day_combo.currentText()
         phase_filter = self.phase_combo.currentText()
         event_type_filter = self.event_type_combo.currentText()
 
         filtered_events = []
         for event in self.events:
-            # Day 필터
+            # Episode 필터링 (LogEvent 객체이므로 .episode 접근 가능)
+            if ep_filter != "전체":
+                if event.episode != int(ep_filter):
+                    continue
+
             if day_filter != "전체":
                 day_num = int(day_filter.split()[1])
                 if event.day != day_num:
                     continue
 
-            # Phase 필터
             if phase_filter != "전체":
                 phase_korean = self._phase_to_korean(event.phase)
                 if phase_korean != phase_filter:
                     continue
 
-            # 이벤트 타입 필터
             if event_type_filter != "전체":
                 event_type_korean = self._event_type_to_korean(event.event_type)
                 if event_type_korean != event_type_filter:
@@ -262,6 +264,7 @@ class LogViewerTab(QWidget):
         self._display_logs(filtered_events)
         self._update_stats(filtered_events)
 
+    # ... (나머지 메서드는 기존과 동일: _display_logs, _get_event_color, _format_event 등) ...
     def _display_logs(self, events: List[GameEvent]):
         """필터링된 이벤트를 텍스트 위젯에 표시 (HTML 사용)"""
         self.log_text.clear()

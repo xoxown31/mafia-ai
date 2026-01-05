@@ -400,7 +400,7 @@ class Launcher(QWidget):
             gui=True,
             paths=paths,
         )
-        self.open_log_live()
+        # self.open_log_live()
         self.start_simulation_signal.emit(args)
 
     def on_click_stop(self):
