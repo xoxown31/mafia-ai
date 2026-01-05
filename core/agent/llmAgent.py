@@ -5,7 +5,7 @@ import numpy as np
 from typing import List, Dict, Optional, TYPE_CHECKING, Any
 from openai import OpenAI
 from dotenv import load_dotenv
-
+import random
 from core.agent.baseAgent import BaseAgent
 from config import config, Role, Phase, EventType, ActionType
 from state import GameStatus, GameEvent, GameAction
@@ -213,9 +213,6 @@ class LLMAgent(BaseAgent):
     def get_action(self) -> GameAction:
         """
         LLM의 JSON 응답을 MafiaAction으로 변환하여 반환
-
-        Note: 이 메서드는 내부적으로 _execute_ai_logic()을 호출하여
-        LLM 응답을 얻은 후 translate_to_engine()으로 변환합니다.
         """
         if not self.current_status:
             return GameAction(target_id=-1, claim_role=None)
@@ -229,10 +226,47 @@ class LLMAgent(BaseAgent):
         else:
             prompt_key = phase_name
 
-        # LLM 실행 및 JSON 응답 파싱
         action_dict = self._execute_ai_logic(prompt_key)
 
-        # translate_to_engine()을 통한 변환
+        # --- 액션 유효성 검증 및 보정 ---
+        if self.current_status.phase in [Phase.NIGHT, Phase.DAY_VOTE]:
+            target_id = action_dict.get("target_id")
+
+            alive_players = [p.id for p in self.current_status.players if p.alive]
+            is_target_alive = target_id in alive_players
+
+            # 기본 유효성: 살아있는가?
+            if not is_target_alive:
+
+                # 대안: 살아있는 플레이어 중 무작위 선택 (자신 제외)
+                possible_targets = [p_id for p_id in alive_players if p_id != self.id]
+                if possible_targets:
+                    action_dict["target_id"] = random.choice(possible_targets)
+                else:  # 선택할 대상이 없으면 기권
+                    action_dict["target_id"] = -1
+
+            # 역할별 추가 규칙 (경찰: 자신 조사 불가)
+            if self.role == Role.POLICE and action_dict["target_id"] == self.id:
+                possible_targets = [p_id for p_id in alive_players if p_id != self.id]
+                if possible_targets:
+                    action_dict["target_id"] = random.choice(possible_targets)
+                else:
+                    action_dict["target_id"] = -1
+
+            # 마피아: 동료 공격 불가
+            if self.role == Role.MAFIA:
+                mafia_team = [
+                    p.id for p in self.current_status.players if p.role == Role.MAFIA
+                ]
+                if action_dict["target_id"] in mafia_team:
+                    possible_targets = [
+                        p_id for p_id in alive_players if p_id not in mafia_team
+                    ]
+                    if possible_targets:
+                        action_dict["target_id"] = random.choice(possible_targets)
+                    else:
+                        action_dict["target_id"] = -1  # 공격할 대상이 없으면 기권
+
         return self.translate_to_engine(action_dict)
 
     def _execute_ai_logic(self, prompt_key: str) -> Dict[str, Any]:

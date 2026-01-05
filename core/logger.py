@@ -78,7 +78,7 @@ class LogManager:
             "VOTE": "Day {day} | Player {actor_id}가 Player {target_id}에게 투표했습니다.",
             "ABSTAIN": "Day {day} | Player {actor_id}는 기권하였습니다.",
             "EXECUTE": "Day {day} | Player {target_id}가 처형되었습니다. (역할: {role_name})",
-            "CANCEL": "Day {day} | 처형이 부결되었습니다.",
+            "CANCEL": "Day {day} | 투표가 무산되어 아무도 처형되지 않았습니다.",
             "KILL": "Night {day} | Player {target_id}가 마피아에게 살해당했습니다.",
             "PROTECT": "Night {day} | 의사가 Player {target_id}를 보호했습니다.",
             "POLICE_RESULT": "Night {day} | 경찰이 Player {target_id}를 조사: {role_name}",
@@ -178,7 +178,7 @@ class LogManager:
             else:
                 template_key = "VOTE"
         if event.event_type == EventType.EXECUTE:
-            if event.target_id == -1:
+            if event.target_id == -1 or event.value is None:
                 template_key = "CANCEL"
             else:
                 template_key = "EXECUTE"
