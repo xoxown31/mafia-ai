@@ -86,7 +86,7 @@ class MafiaGame:
 
         if self.phase == Phase.GAME_START:
             self.phase = Phase.DAY_DISCUSSION
-        if self.phase == Phase.DAY_DISCUSSION:
+        elif self.phase == Phase.DAY_DISCUSSION:
             phase_end = self._process_discussion(actions)
             if phase_end:
                 self.phase = Phase.DAY_VOTE

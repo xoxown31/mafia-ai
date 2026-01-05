@@ -33,7 +33,7 @@ class LLMAgent(BaseAgent):
             api_key=os.getenv("UPSTAGE_API_KEY"),
             base_url="https://api.upstage.ai/v1/solar",
         )
-        self.model = "solar-mini"
+        self.model = "solar-pro"
 
         # Load prompts
         prompt_path = os.path.join(os.path.dirname(__file__), "prompts.yaml")
@@ -227,6 +227,9 @@ class LLMAgent(BaseAgent):
             prompt_key = phase_name
 
         action_dict = self._execute_ai_logic(prompt_key)
+
+        if self.current_status.phase == Phase.DAY_EXECUTE:
+            return action_dict
 
         # --- 액션 유효성 검증 및 보정 ---
         if self.current_status.phase in [Phase.NIGHT, Phase.DAY_VOTE]:

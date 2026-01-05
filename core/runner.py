@@ -246,8 +246,6 @@ def test(
         if hasattr(env, "game") and env.game.logger:
             env.game.logger.set_episode(1)
 
-        obs_dict, _ = env.reset()
-
         # Iterate all agents
         for pid, agent in all_agents.items():
             if stop_event and stop_event.is_set():
