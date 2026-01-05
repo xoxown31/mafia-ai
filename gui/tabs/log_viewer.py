@@ -7,105 +7,192 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QSplitter,
     QLabel,
     QPushButton,
     QComboBox,
     QTextEdit,
-    QFileDialog,
     QGroupBox,
+    QListWidget,
+    QListWidgetItem,
+    QFileDialog,
+    QTreeView,
+    QHeaderView,
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QDir
+from PyQt6.QtGui import QFileSystemModel
 
 from state import GameEvent
 from config import Role, Phase, EventType
 from core.logger import LogManager
 
 
-# state.py 수정 없이 episode 필드를 인식하기 위한 확장 클래스 정의
 class LogEvent(GameEvent):
-    episode: int = 1  # 기본값 설정 (로그에 없어도 에러 안 남)
+    """state.py 수정 없이 episode 필드를 인식하기 위한 확장 클래스"""
+
+    episode: int = 1
 
 
-class LogViewerTab(QWidget):
-    """게임 로그를 자연어로 표시하는 탭 (PyQt6)"""
+# === [좌측 패널] 로그 탐색기 위젯 ===
+class LogExplorerWidget(QWidget):
+    log_selected = pyqtSignal(Path)
 
-    def __init__(self, parent):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.current_log_dir: Optional[Path] = None
-        self.events: List[LogEvent] = []  # LOogEvent는 GameEvent 자식
-        self.log_manager: Optional[LogManager] = None
-
-        self.base_watch_dir = None
-        self.is_monitoring = False
-        self.monitor_timer = QTimer(self)
-        self.monitor_timer.timeout.connect(self._monitor_update)
-
+        self.root_path: Optional[Path] = None
         self._setup_ui()
 
     def _setup_ui(self):
-        """UI 구성"""
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
 
-        # ... (상단 디렉토리 선택 영역 - 기존과 동일) ...
-        top_frame = QWidget()
-        top_layout = QHBoxLayout()
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_frame.setLayout(top_layout)
-        top_layout.addWidget(QLabel("로그 디렉토리:"))
-        self.path_label = QLabel("선택된 디렉토리 없음")
-        self.path_label.setFrameStyle(QLabel.Shape.Panel | QLabel.Shadow.Sunken)
-        top_layout.addWidget(self.path_label, stretch=1)
-        btn_select = QPushButton("디렉토리 선택")
-        btn_select.clicked.connect(self._select_directory)
-        top_layout.addWidget(btn_select)
-        btn_refresh = QPushButton("새로고침")
-        btn_refresh.clicked.connect(self._load_logs)
-        top_layout.addWidget(btn_refresh)
-        layout.addWidget(top_frame)
+        # 1. 헤더
+        header_layout = QHBoxLayout()
+        header_layout.addWidget(QLabel("📂 로그 탐색기"))
 
-        # === 2. 필터 프레임 ===
+        btn_refresh = QPushButton("⟳")
+        btn_refresh.setFixedWidth(30)
+        btn_refresh.setToolTip("목록 새로고침")
+        btn_refresh.clicked.connect(self._refresh_tree)
+        header_layout.addWidget(btn_refresh)
+        layout.addLayout(header_layout)
+
+        # 2. 경로 변경 버튼
+        self.btn_change_root = QPushButton("다른 폴더 열기...")
+        self.btn_change_root.setStyleSheet("font-size: 11px; padding: 3px;")
+        self.btn_change_root.clicked.connect(self._change_root_directory)
+        layout.addWidget(self.btn_change_root)
+
+        # 3. 모델 설정
+        self.model = QFileSystemModel()
+        self.model.setFilter(
+            QDir.Filter.AllDirs | QDir.Filter.Files | QDir.Filter.NoDotAndDotDot
+        )
+        self.model.setNameFilters(["*.jsonl"])
+        self.model.setNameFilterDisables(False)
+
+        # 4. 트리 뷰 설정
+        self.tree = QTreeView()
+        self.tree.setModel(self.model)
+        self.tree.setColumnHidden(1, True)  # Size
+        self.tree.setColumnHidden(2, True)  # Type
+        self.tree.header().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+
+        self.tree.setStyleSheet(
+            """
+            QTreeView { border: 1px solid #444; background-color: #222; color: #ddd; }
+            QTreeView::item:hover { background-color: #333; }
+            QTreeView::item:selected { background-color: #4CAF50; color: white; }
+        """
+        )
+        self.tree.clicked.connect(self._on_tree_clicked)
+        layout.addWidget(self.tree)
+
+        # 5. 초기 경로 설정 (자동으로 logs 폴더 잡기)
+        self._init_default_logs_path()
+
+    def _init_default_logs_path(self):
+        # 현재 파일(gui/tabs/log_viewer.py) 기준 프로젝트 루트 찾기
+        project_root = Path(__file__).parent.parent.parent.resolve()
+        default_logs = project_root / "logs"
+
+        if not default_logs.exists():
+            try:
+                default_logs.mkdir(parents=True, exist_ok=True)
+            except:
+                pass
+
+        self.set_tree_root(default_logs)
+
+    def set_tree_root(self, path: Path):
+        if not path.exists():
+            return
+        self.root_path = path
+        self.model.setRootPath(str(path))
+        self.tree.setRootIndex(self.model.index(str(path)))
+
+    def _refresh_tree(self):
+        if self.root_path:
+            self.model.setRootPath(str(self.root_path))
+
+    def _change_root_directory(self):
+        start_dir = self.root_path if self.root_path else Path.cwd()
+        directory = QFileDialog.getExistingDirectory(
+            self, "로그 폴더 선택", str(start_dir)
+        )
+        if directory:
+            self.set_tree_root(Path(directory))
+
+    def _on_tree_clicked(self, index):
+        file_path = Path(self.model.filePath(index))
+        target_dir = None
+        if file_path.is_file() and file_path.name == "events.jsonl":
+            target_dir = file_path.parent
+        elif file_path.is_dir() and (file_path / "events.jsonl").exists():
+            target_dir = file_path
+
+        if target_dir:
+            self.log_selected.emit(target_dir)
+
+
+# === 로그 컨텐츠 뷰어 위젯 ===
+class LogContentWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.events: List[LogEvent] = []
+        self.log_manager: Optional[LogManager] = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+
         filter_group = QGroupBox("필터")
         filter_layout = QHBoxLayout()
         filter_group.setLayout(filter_layout)
 
-        # Episode 필터
+        # Episode
         filter_layout.addWidget(QLabel("Episode:"))
         self.episode_combo = QComboBox()
         self.episode_combo.addItem("전체")
-        self.episode_combo.currentTextChanged.connect(self._apply_filter)
+        self.episode_combo.currentTextChanged.connect(self.apply_filter)
         filter_layout.addWidget(self.episode_combo)
 
-        # Day 필터
+        # Day
         filter_layout.addWidget(QLabel("Day:"))
         self.day_combo = QComboBox()
         self.day_combo.addItem("전체")
-        self.day_combo.currentTextChanged.connect(self._apply_filter)
+        self.day_combo.currentTextChanged.connect(self.apply_filter)
         filter_layout.addWidget(self.day_combo)
 
-        # Phase 필터
+        # Phase
         filter_layout.addWidget(QLabel("Phase:"))
         self.phase_combo = QComboBox()
         self.phase_combo.addItems(["전체", "낮 토론", "투표", "처형 여부 결정", "밤"])
-        self.phase_combo.currentTextChanged.connect(self._apply_filter)
+        self.phase_combo.currentTextChanged.connect(self.apply_filter)
         filter_layout.addWidget(self.phase_combo)
 
-        # 이벤트 타입 필터
-        filter_layout.addWidget(QLabel("이벤트 타입:"))
+        # Type
+        filter_layout.addWidget(QLabel("Type:"))
         self.event_type_combo = QComboBox()
         self.event_type_combo.addItems(
             ["전체", "주장", "투표", "처형", "살해", "보호", "조사"]
         )
-        self.event_type_combo.currentTextChanged.connect(self._apply_filter)
+        self.event_type_combo.currentTextChanged.connect(self.apply_filter)
         filter_layout.addWidget(self.event_type_combo)
 
         filter_layout.addStretch()
         layout.addWidget(filter_group)
 
-        # ... (로그 표시 영역 및 하단 통계 - 기존과 동일) ...
+        # 2. 로그 텍스트
         log_group = QGroupBox("게임 이벤트 로그")
         log_layout = QVBoxLayout()
         log_group.setLayout(log_layout)
+
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setStyleSheet(
@@ -114,6 +201,7 @@ class LogViewerTab(QWidget):
         log_layout.addWidget(self.log_text)
         layout.addWidget(log_group, stretch=1)
 
+        # 3. 통계
         stats_group = QGroupBox("통계")
         stats_layout = QVBoxLayout()
         stats_group.setLayout(stats_layout)
@@ -121,96 +209,12 @@ class LogViewerTab(QWidget):
         stats_layout.addWidget(self.stats_label)
         layout.addWidget(stats_group)
 
-    def _select_directory(self):
-        # ... (기존 코드 동일) ...
-        directory = QFileDialog.getExistingDirectory(
-            self, "로그 디렉토리 선택", "./logs"
-        )
-        if directory:
-            self.current_log_dir = Path(directory)
-            self.path_label.setText(str(self.current_log_dir))
-            self._load_logs()
+    def set_data(self, events: List[LogEvent], log_manager: Optional[LogManager]):
+        """데이터를 받아서 필터 갱신 및 표시"""
+        self.events = events
+        self.log_manager = log_manager
 
-    def select_live(self, base_path_str):
-        # ... (기존 코드 동일) ...
-        self.base_watch_dir = Path(base_path_str)
-        if not self.base_watch_dir.exists():
-            self._show_message(f"경로를 찾을 수 없음: {base_path_str}")
-            return
-        self.is_monitoring = True
-        self.path_label.setText(f"실시간 감시 중... ({base_path_str})")
-        self.monitor_timer.start(1000)
-        self._monitor_update()
-
-    def _monitor_update(self):
-        # ... (기존 코드 동일) ...
-        if not self.base_watch_dir:
-            return
-        try:
-            subdirs = [d for d in self.base_watch_dir.iterdir() if d.is_dir()]
-            if not subdirs:
-                return
-            latest_dir = max(subdirs, key=lambda d: d.stat().st_mtime)
-            self.current_log_dir = latest_dir
-            self.path_label.setText(str(self.current_log_dir))
-            self._load_logs(silent=True)
-        except Exception as e:
-            print(f"Monitoring error: {e}")
-
-    def _load_logs(self, silent=False):
-        if self.base_watch_dir and self.base_watch_dir.exists():
-            try:
-                subdirs = [d for d in self.base_watch_dir.iterdir() if d.is_dir()]
-                if subdirs:
-                    latest_dir = max(subdirs, key=lambda d: d.stat().st_mtime)
-                    if self.current_log_dir != latest_dir:
-                        self.current_log_dir = latest_dir
-                        self.path_label.setText(str(self.current_log_dir))
-            except Exception as e:
-                print(f"최신 폴더 검색 실패: {e}")
-
-        if not self.current_log_dir:
-            self._show_message("디렉토리를 먼저 선택해주세요.")
-            return
-
-        jsonl_path = self.current_log_dir / "events.jsonl"
-        if not jsonl_path.exists():
-            if not silent:
-                self._show_message("아직 로그 파일이 생성되지 않았습니다.")
-            return
-
-        try:
-            self.log_manager = LogManager(
-                experiment_name="viewer",
-                log_dir=str(self.current_log_dir.parent),
-                use_tensorboard=False,
-                write_mode=False,
-            )
-        except Exception as e:
-            print(f"LogManager 초기화 실패: {e}")
-            self.log_manager = None
-
-        # JSONL 파싱 시 LogEvent 사용
-        self.events = []
-        try:
-            with open(jsonl_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        data = json.loads(line)
-                        # 중요: GameEvent 대신 LogEvent를 사용해야 episode 필드가 보존됩니다.
-                        event = LogEvent(**data)
-                        self.events.append(event)
-        except Exception as e:
-            print(f"상세 에러: {e}")  # 디버깅용 출력
-            self._show_message(f"로그 로드 실패: {e}")
-            return
-
-        if self.is_monitoring:
-            self.log_text.verticalScrollBar().setValue(
-                self.log_text.verticalScrollBar().maximum()
-            )
-
-        # Episode 필터 옵션 업데이트
+        # Episode 필터 갱신
         episodes = sorted(list(set(e.episode for e in self.events)))
         self.episode_combo.blockSignals(True)
         self.episode_combo.clear()
@@ -218,7 +222,7 @@ class LogViewerTab(QWidget):
         self.episode_combo.addItems([str(ep) for ep in episodes])
         self.episode_combo.blockSignals(False)
 
-        # Day 필터 옵션 업데이트
+        # Day 필터 갱신
         days = sorted(set(e.day for e in self.events))
         self.day_combo.blockSignals(True)
         self.day_combo.clear()
@@ -226,141 +230,189 @@ class LogViewerTab(QWidget):
         self.day_combo.addItems([f"Day {d}" for d in days])
         self.day_combo.blockSignals(False)
 
-        self._apply_filter()
+        self.apply_filter()
 
-    def _apply_filter(self):
+    def apply_filter(self):
         if not self.events:
+            self.log_text.clear()
             return
 
         ep_filter = self.episode_combo.currentText()
         day_filter = self.day_combo.currentText()
         phase_filter = self.phase_combo.currentText()
-        event_type_filter = self.event_type_combo.currentText()
+        type_filter = self.event_type_combo.currentText()
 
-        filtered_events = []
+        filtered = []
         for event in self.events:
-            # Episode 필터링 (LogEvent 객체이므로 .episode 접근 가능)
-            if ep_filter != "전체":
-                if event.episode != int(ep_filter):
-                    continue
+            # Episode
+            if ep_filter != "전체" and event.episode != int(ep_filter):
+                continue
+            # Day
+            if day_filter != "전체" and event.day != int(day_filter.split()[1]):
+                continue
+            # Phase
+            if (
+                phase_filter != "전체"
+                and self._phase_to_korean(event.phase) != phase_filter
+            ):
+                continue
+            # Type
+            if (
+                type_filter != "전체"
+                and self._event_type_to_korean(event.event_type) != type_filter
+            ):
+                continue
 
-            if day_filter != "전체":
-                day_num = int(day_filter.split()[1])
-                if event.day != day_num:
-                    continue
+            filtered.append(event)
 
-            if phase_filter != "전체":
-                phase_korean = self._phase_to_korean(event.phase)
-                if phase_korean != phase_filter:
-                    continue
+        self._display_logs(filtered)
+        self._update_stats(filtered)
 
-            if event_type_filter != "전체":
-                event_type_korean = self._event_type_to_korean(event.event_type)
-                if event_type_korean != event_type_filter:
-                    continue
-
-            filtered_events.append(event)
-
-        self._display_logs(filtered_events)
-        self._update_stats(filtered_events)
-
-    # ... (나머지 메서드는 기존과 동일: _display_logs, _get_event_color, _format_event 등) ...
-    def _display_logs(self, events: List[GameEvent]):
-        """필터링된 이벤트를 텍스트 위젯에 표시 (HTML 사용)"""
+    def _display_logs(self, events: List[LogEvent]):
         self.log_text.clear()
-
         if not events:
-            self.log_text.setPlainText("필터 조건에 맞는 이벤트가 없습니다.")
+            self.log_text.setPlainText("조건에 맞는 이벤트가 없습니다.")
             return
 
         grouped = defaultdict(list)
         for event in events:
-            key = (event.day, event.phase)
-            grouped[key].append(event)
+            grouped[(event.day, event.phase)].append(event)
 
-        html_content = ""
-
+        html = ""
         for (day, phase), group_events in sorted(grouped.items()):
-            # 헤더
             phase_str = self._phase_to_korean(phase)
-            html_content += (
-                f"<h3 style='color: #0066cc;'>═══ Day {day} - {phase_str} ═══</h3>"
-            )
-
-            # 이벤트들
+            html += f"<h3 style='color: #0066cc;'>═══ Day {day} - {phase_str} ═══</h3>"
             for event in group_events:
-                event_text = self._format_event(event)
+                text = self._format_event(event)
                 color = self._get_event_color(event.event_type)
-
                 style = f"color: {color};"
                 if event.event_type == EventType.EXECUTE:
                     style += " font-weight: bold;"
+                html += f"<div style='margin-left: 10px; {style}'>• {text}</div>"
+            html += "<br>"
 
-                html_content += (
-                    f"<div style='margin-left: 10px; {style}'>• {event_text}</div>"
-                )
+        self.log_text.setHtml(html)
 
-            html_content += "<br>"
+    def _update_stats(self, events: List[LogEvent]):
+        if not events:
+            self.stats_label.setText("이벤트 없음")
+            return
 
-        self.log_text.setHtml(html_content)
+        counts = defaultdict(int)
+        for e in events:
+            counts[e.event_type] += 1
 
-    def _get_event_color(self, event_type: EventType) -> str:
-        color_map = {
-            EventType.VOTE: "#ff6600",
-            EventType.EXECUTE: "#cc0000",
-            EventType.KILL: "#FF00F2",
-            EventType.PROTECT: "#009900",
-            EventType.POLICE_RESULT: "#6ee2ff",
-        }
-        return color_map.get(event_type, "#f6f6f8")
+        parts = [f"총 이벤트: {len(events)}"]
+        for et, cnt in counts.items():
+            parts.append(f"{self._event_type_to_korean(et)}: {cnt}")
+        self.stats_label.setText(" | ".join(parts))
 
+    # --- Helper Helpers ---
     def _format_event(self, event: GameEvent) -> str:
-        """이벤트 해석 (LogManager 활용)"""
         if self.log_manager:
             try:
                 return self.log_manager.interpret_event(event)
             except:
                 pass
-
-        # Fallback (LogManager 실패 시 간단 표시)
         return f"[{event.event_type.name}] Actor: {event.actor_id}, Target: {event.target_id}"
 
-    def _phase_to_korean(self, phase: Phase) -> str:
-        phase_map = {
+    def _get_event_color(self, et: EventType):
+        return {
+            EventType.VOTE: "#ff6600",
+            EventType.EXECUTE: "#cc0000",
+            EventType.KILL: "#FF00F2",
+            EventType.PROTECT: "#009900",
+            EventType.POLICE_RESULT: "#6ee2ff",
+        }.get(et, "#f6f6f8")
+
+    def _phase_to_korean(self, p: Phase):
+        return {
             Phase.DAY_DISCUSSION: "낮 토론",
             Phase.DAY_VOTE: "투표",
             Phase.DAY_EXECUTE: "처형 여부 결정",
             Phase.NIGHT: "밤",
-        }
-        return phase_map.get(phase, phase.name)
+        }.get(p, p.name)
 
-    def _event_type_to_korean(self, event_type: EventType) -> str:
-        type_map = {
+    def _event_type_to_korean(self, et: EventType):
+        return {
             EventType.CLAIM: "주장",
             EventType.VOTE: "투표",
             EventType.EXECUTE: "처형",
             EventType.KILL: "살해",
             EventType.PROTECT: "보호",
             EventType.POLICE_RESULT: "조사",
-        }
-        return type_map.get(event_type, event_type.name)
+        }.get(et, et.name)
 
-    def _update_stats(self, events: List[GameEvent]):
-        total = len(events)
-        if total == 0:
-            self.stats_label.setText("이벤트 없음")
+
+# 통합 뷰어
+class LogViewerTab(QWidget):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.current_log_dir: Optional[Path] = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        # 전체 레이아웃 (좌우 분할)
+        layout = QHBoxLayout()
+        self.setLayout(layout)
+
+        # 1. 좌측 탐색기
+        self.explorer = LogExplorerWidget()
+        self.explorer.log_selected.connect(self._on_log_selected)
+
+        # 2. 우측 뷰어
+        self.content_viewer = LogContentWidget()
+
+        # 3. 스플리터로 결합
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self.explorer)
+        splitter.addWidget(self.content_viewer)
+        splitter.setStretchFactor(1, 1)  # 우측을 더 넓게
+
+        layout.addWidget(splitter)
+
+    def select_live(self, base_path_str):
+        """라이브 모드 진입 (Launcher에서 호출)"""
+        path = Path(base_path_str)
+        if path.exists():
+            self.explorer.set_root_directory(path)
+
+    def _on_log_selected(self, path: Path):
+        """좌측에서 로그 선택 시 호출"""
+        self.current_log_dir = path
+        self._load_logs(path)
+
+    def _load_logs(self, log_dir: Path):
+        """파일 로드 및 파싱 -> ContentWidget으로 전달"""
+        jsonl_path = log_dir / "events.jsonl"
+        if not jsonl_path.exists():
+            self.content_viewer.log_text.setPlainText("로그 파일이 존재하지 않습니다.")
             return
 
-        type_counts = defaultdict(int)
-        for event in events:
-            type_counts[event.event_type] += 1
+        # LogManager 초기화
+        log_manager = None
+        try:
+            log_manager = LogManager(
+                experiment_name="viewer",
+                log_dir=str(log_dir.parent),
+                use_tensorboard=False,
+                write_mode=False,
+            )
+        except Exception as e:
+            print(f"LogManager Init Fail: {e}")
 
-        stats_parts = [f"총 이벤트: {total}"]
-        for event_type, count in type_counts.items():
-            korean_name = self._event_type_to_korean(event_type)
-            stats_parts.append(f"{korean_name}: {count}")
+        # 파싱
+        events = []
+        try:
+            with open(jsonl_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        data = json.loads(line)
+                        event = LogEvent(**data)
+                        events.append(event)
+        except Exception as e:
+            self.content_viewer.log_text.setPlainText(f"로그 로드 실패: {e}")
+            return
 
-        self.stats_label.setText(" | ".join(stats_parts))
-
-    def _show_message(self, message: str):
-        self.log_text.setPlainText(message)
+        # 우측 뷰어에 데이터 주입
+        self.content_viewer.set_data(events, log_manager)
