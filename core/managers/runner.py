@@ -1,7 +1,8 @@
 import threading
+import os
 from typing import TYPE_CHECKING, Dict, Any, List, Optional
 from core.agents.llm_agent import LLMAgent
-from config import Role, EventType, Phase
+from config import Role, EventType, Phase, config
 from core.managers.stats import StatsManager
 
 if TYPE_CHECKING:
@@ -209,6 +210,22 @@ def train(
                 wr = metrics.get(f"Agent_{pid}/Win_Rate", 0.0)
                 log_str += f" | Ag {pid} R:{episode_rewards[pid]:6.2f} W:{wr*100:3.0f}%"
             print(log_str)
+
+    print("\n[System] Saving trained models...")
+
+    model_dir = getattr(config.paths, "MODEL_DIR", "./models")
+    os.makedirs(model_dir, exist_ok=True)
+
+    # 모든 RL 에이전트 모델 파일로 저장
+    for pid, agent in rl_agents.items():
+        # 파일명 예: agent_0_ppo_lstm.pt
+        save_path = os.path.join(
+            model_dir, f"agent_{pid}_{agent.algorithm}_{agent.backbone}.pt"
+        )
+        # RLAgent 클래스의 save 메서드 호출
+        if hasattr(agent, "save"):
+            agent.save(save_path)
+            print(f"Saved Agent {pid} to: {save_path}")
 
     print(
         f"\n학습 완료. TensorBoard로 결과 확인: tensorboard --logdir={logger.session_dir / 'tensorboard'}"
