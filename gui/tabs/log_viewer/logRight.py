@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 from typing import List, Optional
 from collections import defaultdict
 
@@ -7,23 +5,14 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QSplitter,
     QLabel,
-    QPushButton,
     QComboBox,
     QTextEdit,
     QGroupBox,
-    QListWidget,
-    QListWidgetItem,
-    QFileDialog,
-    QTreeView,
-    QHeaderView,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QDir
-from PyQt6.QtGui import QFileSystemModel
 
 from core.engine.state import GameEvent
-from config import Role, Phase, EventType
+from config import Phase, EventType
 from core.managers.logger import LogManager
 
 
@@ -33,112 +22,7 @@ class LogEvent(GameEvent):
     episode: int = 1
 
 
-class LogExplorerWidget(QWidget):
-    log_selected = pyqtSignal(Path)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.root_path: Optional[Path] = None
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-
-        # 1. 헤더
-        header_layout = QHBoxLayout()
-        header_layout.addWidget(QLabel("📂 로그 탐색기"))
-
-        btn_refresh = QPushButton("⟳")
-        btn_refresh.setFixedWidth(30)
-        btn_refresh.setToolTip("목록 새로고침")
-        btn_refresh.clicked.connect(self._refresh_tree)
-        header_layout.addWidget(btn_refresh)
-        layout.addLayout(header_layout)
-
-        # 2. 경로 변경 버튼
-        self.btn_change_root = QPushButton("다른 폴더 열기...")
-        self.btn_change_root.setStyleSheet("font-size: 11px; padding: 3px;")
-        self.btn_change_root.clicked.connect(self._change_root_directory)
-        layout.addWidget(self.btn_change_root)
-
-        # 3. 모델 설정
-        self.model = QFileSystemModel()
-        self.model.setFilter(
-            QDir.Filter.AllDirs | QDir.Filter.Files | QDir.Filter.NoDotAndDotDot
-        )
-        self.model.setNameFilters(["*.jsonl"])
-        self.model.setNameFilterDisables(False)
-
-        # 4. 트리 뷰 설정
-        self.tree = QTreeView()
-        self.tree.setModel(self.model)
-        self.tree.setColumnHidden(1, True)  # Size
-        self.tree.setColumnHidden(2, True)  # Type
-        self.tree.header().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-
-        self.tree.setStyleSheet(
-            """
-            QTreeView { border: 1px solid #444; background-color: #222; color: #ddd; }
-            QTreeView::item:hover { background-color: #333; }
-            QTreeView::item:selected { background-color: #4CAF50; color: white; }
-        """
-        )
-        self.tree.clicked.connect(self._on_tree_clicked)
-        layout.addWidget(self.tree)
-
-        # 5. 초기 경로 설정 (자동으로 logs 폴더 잡기)
-        self._init_default_logs_path()
-
-    def _init_default_logs_path(self):
-        # 현재 파일(gui/tabs/log_viewer.py) 기준 프로젝트 루트 찾기
-        project_root = Path(__file__).parent.parent.parent.resolve()
-        default_logs = project_root / "logs"
-
-        if not default_logs.exists():
-            try:
-                default_logs.mkdir(parents=True, exist_ok=True)
-            except:
-                pass
-
-        self.set_tree_root(default_logs)
-
-    def set_tree_root(self, path: Path):
-        if not path.exists():
-            return
-        self.root_path = path
-        self.model.setRootPath(str(path))
-        self.tree.setRootIndex(self.model.index(str(path)))
-
-    def _refresh_tree(self):
-        if self.root_path:
-            self.model.setRootPath(str(self.root_path))
-
-    def _change_root_directory(self):
-        start_dir = self.root_path if self.root_path else Path.cwd()
-        directory = QFileDialog.getExistingDirectory(
-            self, "로그 폴더 선택", str(start_dir)
-        )
-        if directory:
-            self.set_tree_root(Path(directory))
-
-    def _on_tree_clicked(self, index):
-        file_path = Path(self.model.filePath(index))
-        target_dir = None
-        if file_path.is_file() and file_path.name == "events.jsonl":
-            target_dir = file_path.parent
-        elif file_path.is_dir() and (file_path / "events.jsonl").exists():
-            target_dir = file_path
-
-        if target_dir:
-            self.log_selected.emit(target_dir)
-
-
-# === 로그 컨텐츠 뷰어 위젯 ===
-class LogContentWidget(QWidget):
+class LogRight(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.events: List[LogEvent] = []
@@ -342,77 +226,3 @@ class LogContentWidget(QWidget):
             EventType.PROTECT: "보호",
             EventType.POLICE_RESULT: "조사",
         }.get(et, et.name)
-
-
-# 통합 뷰어
-class LogViewerTab(QWidget):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.current_log_dir: Optional[Path] = None
-        self._setup_ui()
-
-    def _setup_ui(self):
-        # 전체 레이아웃 (좌우 분할)
-        layout = QHBoxLayout()
-        self.setLayout(layout)
-
-        # 1. 좌측 탐색기
-        self.explorer = LogExplorerWidget()
-        self.explorer.log_selected.connect(self._on_log_selected)
-
-        # 2. 우측 뷰어
-        self.content_viewer = LogContentWidget()
-
-        # 3. 스플리터로 결합
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.explorer)
-        splitter.addWidget(self.content_viewer)
-        splitter.setStretchFactor(1, 1)  # 우측을 더 넓게
-
-        layout.addWidget(splitter)
-
-    def select_live(self, base_path_str):
-        """라이브 모드 진입 (Launcher에서 호출)"""
-        path = Path(base_path_str)
-        if path.exists():
-            self.explorer.set_root_directory(path)
-
-    def _on_log_selected(self, path: Path):
-        """좌측에서 로그 선택 시 호출"""
-        self.current_log_dir = path
-        self._load_logs(path)
-
-    def _load_logs(self, log_dir: Path):
-        """파일 로드 및 파싱 -> ContentWidget으로 전달"""
-        jsonl_path = log_dir / "events.jsonl"
-        if not jsonl_path.exists():
-            self.content_viewer.log_text.setPlainText("로그 파일이 존재하지 않습니다.")
-            return
-
-        # LogManager 초기화
-        log_manager = None
-        try:
-            log_manager = LogManager(
-                experiment_name="viewer",
-                log_dir=str(log_dir.parent),
-                use_tensorboard=False,
-                write_mode=False,
-            )
-        except Exception as e:
-            print(f"LogManager Init Fail: {e}")
-
-        # 파싱
-        events = []
-        try:
-            with open(jsonl_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        data = json.loads(line)
-                        event = LogEvent(**data)
-                        events.append(event)
-        except Exception as e:
-            self.content_viewer.log_text.setPlainText(f"로그 로드 실패: {e}")
-            return
-
-        # 우측 뷰어에 데이터 주입
-        self.content_viewer.set_data(events, log_manager)
