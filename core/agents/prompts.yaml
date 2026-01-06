@@ -47,6 +47,7 @@ GAME_DATA_BLOCK: &game_data_block |
   - 당신의 역할: {role_name} / ID: {id}
   - 게임 상태:
   {game_status}
+  - 요약된 정보 : {structured_summary}
   - 대화 및 행동 기록: {conversation_log}
 
 # ==========================================================

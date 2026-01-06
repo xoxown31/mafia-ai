@@ -195,11 +195,11 @@ class MafiaGame:
             if self.players[player_id].alive
         }
         votes = [0] * len(self.players)
-        
+
         # 투표 수 초기화 (보상 계산 안전성 확보)
         for p in self.players:
             p.vote_count = 0
-        
+
         # Phase 2: 모든 투표를 한 번에 처리
         for player_id, action in filtered_actions.items():
             target_id = action.target_id
@@ -227,7 +227,6 @@ class MafiaGame:
 
         self._last_votes = votes
 
-        
         return True
 
     def _process_execute(self, actions: Dict[int, GameAction]) -> bool:
@@ -317,7 +316,6 @@ class MafiaGame:
                 if self.logger:
                     self.logger.log_event(role_reveal_event)
 
-        
         return True
 
     def _process_night(self, actions: Dict[int, GameAction]) -> bool:
@@ -412,7 +410,7 @@ class MafiaGame:
 
         if final_mafia_target is not None and final_mafia_target != doctor_target:
             self.players[final_mafia_target].alive = False
-        
+
         return True
 
     def get_game_status(self, viewer_id: Optional[int] = None) -> GameStatus:
@@ -474,21 +472,21 @@ class MafiaGame:
         """
         m_count = sum(1 for p in self.players if p.role == Role.MAFIA and p.alive)
         c_count = sum(1 for p in self.players if p.role != Role.MAFIA and p.alive)
-        
+
         termination_rules = [
-            (self.day > config.game.MAX_DAYS, False), # 1. 턴 초과 (마피아 승)
-            (m_count == 0,                   True),   # 2. 마피아 전멸 (시민 승)
-            (m_count >= c_count,             False)   # 3. 마피아 과반 (마피아 승)
+            (self.day > config.game.MAX_DAYS, False),  # 1. 턴 초과 (마피아 승)
+            (m_count == 0, True),  # 2. 마피아 전멸 (시민 승)
+            (m_count >= c_count, False),  # 3. 마피아 과반 (마피아 승)
         ]
-        
+
         for condition, citizen_win in termination_rules:
             if condition:
                 if player_id is None:
                     return True, citizen_win
-                
-                is_mafia_team = (self.players[player_id].role == Role.MAFIA)
-                my_win = (citizen_win != is_mafia_team)
-                
+
+                is_mafia_team = self.players[player_id].role == Role.MAFIA
+                my_win = citizen_win != is_mafia_team
+
                 return True, my_win
 
         return False, False

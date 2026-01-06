@@ -192,7 +192,7 @@ class LogManager:
             return f"[No Template] {template_key}"
 
         role_name = (
-            self._get_role_korean_name(event.value)
+            self.get_role_korean_name(event.value)
             if isinstance(event.value, Role)
             else ""
         )
@@ -205,7 +205,7 @@ class LogManager:
         )
 
     @staticmethod
-    def _get_role_korean_name(role: Role) -> str:
+    def get_role_korean_name(role: Role) -> str:
         """역할의 한국어 이름 반환"""
         role_names = {
             Role.CITIZEN: "시민",

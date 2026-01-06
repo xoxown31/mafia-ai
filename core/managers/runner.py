@@ -61,12 +61,12 @@ def train(
             if hasattr(agent, "reset_hidden"):
                 agent.reset_hidden()
 
-        obs_dict, _ = env.reset()
         done = False
 
         # 에피소드별 보상 추적
         episode_rewards = {pid: 0.0 for pid in rl_agents.keys()}
         is_wins = {pid: False for pid in rl_agents.keys()}
+        obs_dict, _ = env.reset()
 
         while not done:
             if stop_event and stop_event.is_set():
@@ -92,7 +92,7 @@ def train(
                     # env가 제공하는 인터페이스를 사용해야 하지만, 현재 구조상 game 접근이 불가피함.
                     # 다만, env.agents에 있는 에이전트만 실행하므로 생존 여부는 확인됨.
                     status = env.game.get_game_status(player.id)
-                    
+
                     a = player.get_action(status)
                     with lock:
                         actions[p_key] = a
@@ -121,7 +121,7 @@ def train(
                         try:
                             # 일반 봇도 상태 업데이트 필요할 수 있음
                             status = env.game.get_game_status(pid)
-                            
+
                             # 봇 액션 가져오기
                             a = agent.get_action(status)
                             actions[p_key] = a
@@ -164,8 +164,11 @@ def train(
             break
 
         # 에피소드 종료 후 학습 및 메트릭 수집
-        train_metrics = {"Mafia": {"loss": [], "entropy": []}, "Citizen": {"loss": [], "entropy": []}}
-        
+        train_metrics = {
+            "Mafia": {"loss": [], "entropy": []},
+            "Citizen": {"loss": [], "entropy": []},
+        }
+
         for agent in rl_agents.values():
             if hasattr(agent, "update"):
                 res = agent.update()
@@ -183,7 +186,7 @@ def train(
             all_agents=all_agents,
             episode_rewards=episode_rewards,
             is_wins=is_wins,
-            train_metrics=train_metrics
+            train_metrics=train_metrics,
         )
 
         # 대표 에이전트 (첫 번째) - 호환성 유지

@@ -18,6 +18,7 @@ class EnvAgent(BaseAgent):
     Environment internal agent placeholder to satisfy MafiaGame requirements.
     This agent does not perform any logic; it just holds state.
     """
+
     def get_action(self, status: GameStatus) -> GameAction:
         return GameAction(target_id=-1, claim_role=None)
 
@@ -109,7 +110,7 @@ class MafiaEnv(ParallelEnv):
 
         for agent in self.agents:
             pid = self._agent_to_id(agent)
-            
+
             observations[agent] = {
                 "observation": self._encode_observation(pid),
                 "action_mask": self._get_action_mask(pid),
@@ -119,8 +120,10 @@ class MafiaEnv(ParallelEnv):
                 _, my_win = self.game.check_game_over(player_id=pid)
             else:
                 my_win = False
-            
-            rewards[agent] = self._calculate_reward(pid, prev_alive, prev_phase, engine_actions.get(pid), is_over, is_win)
+
+            rewards[agent] = self._calculate_reward(
+                pid, prev_alive, prev_phase, engine_actions.get(pid), is_over, is_win
+            )
             terminations[agent] = is_over
             truncations[agent] = False
             infos[agent] = {"day": status.day, "phase": status.phase, "win": my_win}
@@ -197,12 +200,16 @@ class MafiaEnv(ParallelEnv):
         elif role == Role.POLICE:
             reward += self._calculate_police_reward(action_target, prev_phase)
         elif role == Role.DOCTOR:
-            reward += self._calculate_doctor_reward(prev_alive, action_target, prev_phase)
-            
+            reward += self._calculate_doctor_reward(
+                prev_alive, action_target, prev_phase
+            )
+
         # 4. 기만 및 설득 보상 (New)
         reward += self._calculate_deception_reward(agent_id, role, prev_phase)
-        reward += self._calculate_persuasion_reward(agent_id, role, prev_phase, mafia_action)
-        
+        reward += self._calculate_persuasion_reward(
+            agent_id, role, prev_phase, mafia_action
+        )
+
         return reward
 
     def _calculate_deception_reward(self, agent_id, role, phase):
@@ -213,31 +220,34 @@ class MafiaEnv(ParallelEnv):
         """
         if role != Role.MAFIA:
             return 0.0
-            
+
         reward = 0.0
-        
+
         # 1. 낮 토론 단계: 타인이 나를 경찰/의사로 지목
         if phase == Phase.DAY_DISCUSSION:
             if self.game.history:
                 last_evt = self.game.history[-1]
-                if (last_evt.event_type == EventType.CLAIM and 
-                    last_evt.target_id == agent_id and 
-                    last_evt.actor_id != agent_id):
-                    
+                if (
+                    last_evt.event_type == EventType.CLAIM
+                    and last_evt.target_id == agent_id
+                    and last_evt.actor_id != agent_id
+                ):
+
                     if last_evt.value in [Role.POLICE, Role.DOCTOR]:
                         reward += 0.5  # 기만 성공
-        
+
         # 2. 투표 단계: 득표수가 평균보다 낮음
         elif phase == Phase.DAY_VOTE:
             alive_players = [p for p in self.game.players if p.alive]
-            if not alive_players: return 0.0
-            
+            if not alive_players:
+                return 0.0
+
             avg_votes = sum(p.vote_count for p in alive_players) / len(alive_players)
             my_votes = self.game.players[agent_id].vote_count
-            
+
             if my_votes < avg_votes:
                 reward += 0.2
-                
+
         return reward
 
     def _calculate_persuasion_reward(self, agent_id, role, phase, my_action):
@@ -249,37 +259,39 @@ class MafiaEnv(ParallelEnv):
         # 혹은 전체에게 적용할 수도 있음. 여기서는 시민 팀(시민, 경찰, 의사)에게 적용.
         if role == Role.MAFIA:
             return 0.0
-            
+
         reward = 0.0
-        
+
         target_id = -1
         if isinstance(my_action, dict):
             target_id = my_action.get("target_id", -1)
         elif hasattr(my_action, "target_id"):
             target_id = my_action.target_id
-            
+
         if target_id == -1:
             return 0.0
-        
+
         if phase == Phase.DAY_VOTE:
             # 타겟의 득표수 확인 (나 제외)
             target_votes = self.game.players[target_id].vote_count
-            if target_votes > 1: # 나 말고 최소 1명 더
+            if target_votes > 1:  # 나 말고 최소 1명 더
                 reward += 0.1 * (target_votes - 1)
-                
+
         elif phase == Phase.DAY_DISCUSSION:
             # 최근 history 확인
             count = 0
-            recent_events = self.game.history[-config.game.PLAYER_COUNT:]
+            recent_events = self.game.history[-config.game.PLAYER_COUNT :]
             for evt in recent_events:
-                if (evt.event_type == EventType.CLAIM and 
-                    evt.target_id == target_id and 
-                    evt.actor_id != agent_id):
+                if (
+                    evt.event_type == EventType.CLAIM
+                    and evt.target_id == target_id
+                    and evt.actor_id != agent_id
+                ):
                     count += 1
-            
+
             if count > 0:
                 reward += 0.2 * count
-                
+
         return reward
 
     def _calculate_citizen_reward(self, action, phase):
@@ -404,7 +416,7 @@ class MafiaEnv(ParallelEnv):
             phase_vec[1] = 1.0
         else:  # Execute or Night
             phase_vec[2] = 1.0
-            
+
         # 3. 직전 사건 (30)
         # target_event가 있으면 그것을 사용, 없으면 history의 마지막 사용
         last_event = target_event
@@ -455,40 +467,68 @@ class MafiaEnv(ParallelEnv):
             type_vec = np.zeros(7, dtype=np.float32)  # None type?
 
         # Concatenate all
-        obs = np.concatenate([
-            id_vec,      # 8
-            role_vec,    # 4
-            day_vec,     # 1
-            phase_vec,   # 3
-            actor_vec,   # 9
-            target_vec,  # 9
-            value_vec,   # 5
-            type_vec     # 7
-        ]) # Total 46
-        
+        obs = np.concatenate(
+            [
+                id_vec,  # 8
+                role_vec,  # 4
+                day_vec,  # 1
+                phase_vec,  # 3
+                actor_vec,  # 9
+                target_vec,  # 9
+                value_vec,  # 5
+                type_vec,  # 7
+            ]
+        )  # Total 46
+
         return obs
 
     def _get_action_mask(self, agent_id):
-        # 기존 로직 활용 또는 단순화
-        # Target(9) + Role(5) = 14
-        mask = np.ones(14, dtype=np.int8)
+        """
+        에이전트가 현재 상태에서 수행할 수 있는 유효한 행동 마스크를 생성합니다.
+        마스크는 [Target(9), Role(5)] 형태로 총 14차원입니다.
 
+        타겟 마스크 (_target_mask, 9차원):
+            - mask[0]: 아무도 지목하지 않음 (PASS)
+            - mask[1] ~ mask[8]: Player 0 ~ 7 지목
+
+        역할 마스크 (_role_mask, 5차원):
+            - mask[0]: 역할을 주장하지 않음
+            - mask[1] ~ mask[4]: 시민, 경찰, 의사, 마피아 역할 주장
+        """
         status = self.game.get_game_status(agent_id)
         agent = self.game.players[agent_id]
 
+        _target_mask = np.zeros(9, dtype=np.int8)
+        _role_mask = np.zeros(5, dtype=np.int8)
+
         if not agent.alive:
-            return np.zeros(14, dtype=np.int8)
+            return np.concatenate([_target_mask, _role_mask])
 
-        # Target Mask
-        # 죽은 사람은 타겟 불가 (단, 의사는 죽은 사람 살리기 불가, 경찰은 죽은 사람 조사 불가 등 규칙에 따라)
-        # 여기서는 간단히 죽은 사람 마스킹
-        for i, p in enumerate(status.players):
-            if not p.alive:
-                mask[i] = 0
+        _target_mask[0] = 1
+        _role_mask[0] = 1
 
-        # Role Mask
-        # 시민은 Role Claim 외에 Role Action 불가? -> 여기서는 Role Claim 용도로만 Role Head 사용
-        # Role Head는 Claim할 직업을 선택하는 것.
-        # 0~3: Role, 4: None (Claim 안함)
+        valid_targets = {p.id for p in self.game.players if p.alive}
+        phase = status.phase
 
-        return mask
+        if phase == Phase.NIGHT:
+            if agent.role == Role.MAFIA:
+                mafia_team_ids = {
+                    p.id for p in self.game.players if p.role == Role.MAFIA
+                }
+                valid_targets -= mafia_team_ids
+            elif agent.role == Role.POLICE:
+                valid_targets.discard(agent_id)
+
+        elif phase == Phase.DAY_VOTE:
+            valid_targets.discard(agent_id)
+
+        elif phase == Phase.DAY_DISCUSSION:
+            _role_mask[1:] = 1
+
+        if not valid_targets:
+            _target_mask[1:] = 0
+        else:
+            for target_id in valid_targets:
+                _target_mask[target_id + 1] = 1
+
+        return np.concatenate([_target_mask, _role_mask])

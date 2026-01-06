@@ -9,6 +9,7 @@ import random
 from core.agents.base_agent import BaseAgent
 from config import config, Role, Phase, EventType, ActionType
 from core.engine.state import GameStatus, GameEvent, GameAction
+from collections import defaultdict
 
 if TYPE_CHECKING:
     from core.managers.logger import LogManager
@@ -177,6 +178,8 @@ class LLMAgent(BaseAgent):
         """
         LLM의 JSON 응답을 MafiaAction으로 변환하여 반환
         """
+        self.role = status.my_role
+
         phase_name = status.phase.name
         role_name = self.role.name
 
@@ -202,30 +205,45 @@ class LLMAgent(BaseAgent):
             # 1. 살아있는 플레이어를 타겟했는가?
             if target_id not in alive_players:
                 is_valid = False
-                print(f"[Player {self.id}] WARNING: LLM targeted non-survivor {target_id}. Overriding.")
+                print(
+                    f"[Player {self.id}] WARNING: LLM targeted non-survivor {target_id}. Overriding."
+                )
 
             # 2. (투표 시) 자기 자신에게 투표했는가?
             if status.phase == Phase.DAY_VOTE and target_id == self.id:
                 is_valid = False
-                print(f"[Player {self.id}] WARNING: LLM tried to vote for self. Overriding.")
+                print(
+                    f"[Player {self.id}] WARNING: LLM tried to vote for self. Overriding."
+                )
 
             # 3. (경찰) 자기 자신을 조사했는가?
-            if self.role == Role.POLICE and status.phase == Phase.NIGHT and target_id == self.id:
+            if (
+                self.role == Role.POLICE
+                and status.phase == Phase.NIGHT
+                and target_id == self.id
+            ):
                 is_valid = False
-                print(f"[Player {self.id}] WARNING: Police LLM tried to investigate self. Overriding.")
+                print(
+                    f"[Player {self.id}] WARNING: Police LLM tried to investigate self. Overriding."
+                )
 
             # 4. (마피아) 동료 또는 자신을 공격/투표했는가?
             if self.role == Role.MAFIA:
                 # action_history에서 동료 마피아 정보를 올바르게 파싱
                 mafia_team = {self.id}
                 for event in status.action_history:
-                    if event.event_type == EventType.POLICE_RESULT and event.value == Role.MAFIA:
+                    if (
+                        event.event_type == EventType.POLICE_RESULT
+                        and event.value == Role.MAFIA
+                    ):
                         mafia_team.add(event.target_id)
-                
+
                 if target_id in mafia_team:
                     is_valid = False
-                    print(f"[Player {self.id}] WARNING: Mafia LLM targeted teammate {target_id}. Overriding.")
-            
+                    print(
+                        f"[Player {self.id}] WARNING: Mafia LLM targeted teammate {target_id}. Overriding."
+                    )
+
             # 유효하지 않은 액션일 경우, 안전한 타겟으로 강제 변경
             if not is_valid:
                 # 재선택을 위한 후보 목록 준비 (기본: 자신 제외)
@@ -270,6 +288,7 @@ class LLMAgent(BaseAgent):
         )
 
         conversation_log_for_llm = self._create_conversation_log(status)
+        structured_summary_for_llm = self._create_structured_summary(status)
 
         llm_status_lines = []
         llm_status_lines.append(
@@ -290,6 +309,7 @@ class LLMAgent(BaseAgent):
             id=self.id,
             game_status="\n".join(llm_status_lines),
             conversation_log=conversation_log_for_llm,
+            structured_summary=structured_summary_for_llm,
         )
 
         final_user_msg = user_template.format(game_data=game_data_for_llm)
@@ -334,8 +354,84 @@ class LLMAgent(BaseAgent):
             return "LogManager가 설정되지 않아 기록을 표시할 수 없습니다."
 
         # LogManager를 통한 통합 해석 (중복 제거)
-        log_lines = [
-            self.logger.interpret_event(e) for e in status.action_history
-        ]
+        log_lines = [self.logger.interpret_event(e) for e in status.action_history]
 
         return "\n".join(log_lines) if log_lines else "아직 기록된 행동이 없습니다."
+
+    def _create_structured_summary(self, status: GameStatus) -> str:
+        """
+        게임 기록을 분석하여 투표, 주장, 사망 등 핵심 정보를 요약한 텍스트를 생성합니다.
+        """
+
+        summary_lines = []
+        vote_details = defaultdict(lambda: defaultdict(list))
+        for event in status.action_history:
+            if event.event_type == EventType.VOTE and event.target_id != -1:
+                vote_details[event.day][event.target_id].append(event.actor_id)
+
+        if vote_details:
+            summary_lines.append("* 투표 요약:")
+            for day, votes in sorted(vote_details.items()):
+                day_summary = []
+                sorted_targets = sorted(
+                    votes.items(), key=lambda item: len(item[1]), reverse=True
+                )
+                for target_id, voters in sorted_targets:
+                    voter_str = ", ".join(map(str, sorted(voters)))
+                    day_summary.append(
+                        f"Player {target_id} ({len(voters)}표) M-- [{voter_str}]"
+                    )
+                summary_lines.append(f"  - {day}일차: " + " | ".join(day_summary))
+
+        death_summary = []
+        for event in status.action_history:
+            if (
+                event.event_type == EventType.EXECUTE
+                and event.target_id != -1
+                and event.value is not None
+            ):
+                role_name = (
+                    self.logger.get_role_korean_name(event.value)
+                    if self.logger
+                    else event.value.name
+                )
+                death_summary.append(
+                    f"{event.day}일차 낮: Player {event.target_id} 처형됨 (직업: {role_name})"
+                )
+            elif event.event_type == EventType.KILL:
+                death_summary.append(
+                    f"{event.day}일차 밤: Player {event.target_id} 살해당함"
+                )
+
+        if death_summary:
+            summary_lines.append("\n* 사망자 정보:")
+            summary_lines.extend([f" - {s}" for s in sorted(list(set(death_summary)))])
+
+        my_night_actions = []
+        for event in status.action_history:
+            if event.phase == Phase.NIGHT and event.actor_id == status.my_id:
+                if (
+                    event.event_type == EventType.POLICE_RESULT
+                    and event.value is not None
+                ):
+                    role_name = (
+                        self.logger.get_role_korean_name(event.value)
+                        if self.logger
+                        else event.value.name
+                    )
+                    my_night_actions.append(
+                        f"{event.day}일차 밤: Player {event.target_id}을(를) 조사하여 '{role_name}'임을 확인"
+                    )
+                elif event.event_type == EventType.PROTECT:
+                    my_night_actions.append(
+                        f"{event.day}일차 밤: Player {event.target_id}을(를) 보호함"
+                    )
+
+        if my_night_actions:
+            summary_lines.append("\n* 나의 비공개 행동 결과:")
+            summary_lines.extend([f"  - {s}" for s in my_night_actions])
+
+        if not summary_lines:
+            return "아직 요약할 정보가 없습니다."
+
+        return "\n".join(summary_lines)
