@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QMenu,
     QMessageBox,
+    QAbstractItemView,
 )
 from PyQt6.QtCore import pyqtSignal, QDir, Qt
 from PyQt6.QtGui import QFileSystemModel, QAction
@@ -59,7 +60,6 @@ class LogLeft(QWidget):
         self.tree.header().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
         )
-
         self.tree.setStyleSheet(
             """
             QTreeView { border: 1px solid #444; background-color: #222; color: #ddd; }
@@ -71,6 +71,7 @@ class LogLeft(QWidget):
         self.tree.doubleClicked.connect(self._on_tree_double_clicked)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._open_context_menu)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
         layout.addWidget(self.tree)
 
@@ -133,20 +134,33 @@ class LogLeft(QWidget):
 
         menu = QMenu()
 
-        delete_action = QAction("삭제", self)
-        delete_action.triggered.connect(lambda: self._delete_folder(index))
+        selection = self.tree.selectionModel().selectedRows(0)
+
+        if index in selection:
+            target_indexes = selection
+        else:
+            target_indexes = [index]
+
+        count = len(target_indexes)
+        label = f"삭제 ({count}개 항목)" if count > 1 else "삭제 (Delete)"
+
+        delete_action = QAction(label, self)
+        delete_action.triggered.connect(lambda: self._delete_folders(target_indexes))
         menu.addAction(delete_action)
 
         menu.exec(self.tree.viewport().mapToGlobal(position))
 
-    def _delete_folder(self, index):
-        file_path = Path(self.model.filePath(index))
+    def _delete_folders(self, indexes):
+        file_paths = [Path(self.model.filePath(idx)) for idx in indexes]
+        paths = list(set(file_paths))
+        count = len(paths)
+        success_count = 0
 
         # 삭제 여부 재확인
         reply = QMessageBox.question(
             self,
             "삭제 확인",
-            f"정말로 다음 항목을 영구 삭제하시겠습니까?\n\n{file_path.name}",
+            f"정말로 {count}개 항목을 영구 삭제하시겠습니까?\n\n",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -154,16 +168,17 @@ class LogLeft(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        # 삭제
-        try:
-            if file_path.is_dir():
-                shutil.rmtree(file_path)  # 폴더 삭제 (내부 파일 포함)
-            else:
-                os.remove(file_path)
+        for file_path in paths:
+            try:
+                # 이미 지워졌는지 확인 (예: 상위 폴더를 지워서 같이 지워진 경우)
+                if not file_path.exists():
+                    continue
 
-            print(f"[GUI] Deleted: {file_path}")
+                if file_path.is_dir():
+                    shutil.rmtree(file_path)
+                else:
+                    os.remove(file_path)
+                success_count += 1
 
-        except Exception as e:
-            QMessageBox.critical(
-                self, "삭제 실패", f"삭제 중 오류가 발생했습니다:\n{e}"
-            )
+            except Exception as e:
+                error_msg += f"\n- {file_path.name}: {e}"
