@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QTa
 from PyQt6.QtGui import QFont
 from PyQt6.QtGui import QIcon
 
-from .tabs.log_viewer import LogViewerTab
+from .tabs.log_viewer import LogViewer
 from pathlib import Path
 
 
@@ -26,7 +26,7 @@ class MafiaLogViewerWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         layout.addWidget(self.tab_widget)
 
-        self.log_viewer_tab = LogViewerTab(self)
+        self.log_viewer_tab = LogViewer(self)
         self.tab_widget.addTab(self.log_viewer_tab, "로그 뷰어")
 
     def _load_stylesheet(self):
