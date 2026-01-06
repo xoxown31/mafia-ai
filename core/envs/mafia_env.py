@@ -176,15 +176,9 @@ class MafiaEnv(ParallelEnv):
             my_win = (win and not is_mafia_team) or (not win and is_mafia_team)
 
             if my_win:
-                reward += 10.0
+                reward += 50.0
             else:
-                reward -= 5.0
-
-        # 2. 생존 보상 (약하게)
-        if not agent.alive:
-            reward -= 0.1
-        else:
-            reward += 0.05
+                reward -= 50.0
 
         # 3. 역할 기반 행동 보상
         action_target = -1
@@ -302,18 +296,18 @@ class MafiaEnv(ParallelEnv):
             target = self.game.players[action]
             if phase == Phase.DAY_VOTE:
                 if target.role == Role.MAFIA:
-                    reward += 15.0
+                    reward += 1.5
                     if not target.alive:
-                        reward += 10.0
+                        reward += 1.0
                 elif target.role in [Role.POLICE, Role.DOCTOR]:
-                    reward -= 8.0
+                    reward -= 1.5
                 elif target.role == Role.CITIZEN:
-                    reward -= 2.0
+                    reward -= 1.0
             elif phase == Phase.DAY_DISCUSSION:
                 if target.role == Role.MAFIA:
-                    reward += 3.0
+                    reward += 1.0
                 elif target.role in [Role.POLICE, Role.DOCTOR]:
-                    reward -= 1.0
+                    reward -= 0.5
         return reward
 
     def _calculate_mafia_reward(self, action, phase):
@@ -324,32 +318,32 @@ class MafiaEnv(ParallelEnv):
             target = self.game.players[action]
             if phase == Phase.DAY_VOTE:
                 if target.role == Role.POLICE:
-                    reward += 20.0
+                    reward += 1.0
                     if not target.alive:
-                        reward += 15.0
+                        reward += 0.5
                 elif target.role == Role.DOCTOR:
-                    reward += 15.0
+                    reward += 0.5
                     if not target.alive:
-                        reward += 10.0
+                        reward += 0.5
                 elif target.role == Role.CITIZEN:
-                    reward += 5.0
+                    reward += 0.3
                     if not target.alive:
-                        reward += 3.0
+                        reward += 0.1
                 elif target.role == Role.MAFIA:
-                    reward -= 25.0
+                    reward -= 2.5
             elif phase == Phase.NIGHT:
                 if target.role == Role.POLICE:
-                    reward += 25.0
+                    reward += 2.5
                     if not target.alive:
-                        reward += 15.0
+                        reward += 1.5
                 elif target.role == Role.DOCTOR:
-                    reward += 18.0
+                    reward += 1.8
                     if not target.alive:
-                        reward += 12.0
+                        reward += 1.2
                 elif target.role == Role.CITIZEN:
-                    reward += 8.0
+                    reward += 0.8
                     if not target.alive:
-                        reward += 5.0
+                        reward += 0.5
         return reward
 
     def _calculate_police_reward(self, action, phase):
@@ -359,9 +353,7 @@ class MafiaEnv(ParallelEnv):
         if 0 <= action < len(self.game.players):
             target = self.game.players[action]
             if target.role == Role.MAFIA:
-                reward += 20.0
-            else:
-                reward += 2.0
+                reward += 3.0
         return reward
 
     def _calculate_doctor_reward(self, prev_alive, action, phase):
@@ -371,17 +363,15 @@ class MafiaEnv(ParallelEnv):
         current_alive_count = sum(p.alive for p in self.game.players)
         prev_alive_count = sum(prev_alive)
         if current_alive_count == prev_alive_count:
-            reward += 25.0
+            reward += 2.5
             if 0 <= action < len(self.game.players):
                 target = self.game.players[action]
                 if target.role == Role.POLICE:
-                    reward += 15.0
+                    reward += 2.0
                 elif target.role == Role.DOCTOR:
-                    reward += 10.0
+                    reward += 1.5
                 elif target.role == Role.CITIZEN:
-                    reward += 5.0
-        else:
-            reward += 1.0
+                    reward += 1.0
         return reward
 
     def _encode_observation(
