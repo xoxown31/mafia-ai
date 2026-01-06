@@ -134,7 +134,6 @@ class LogLeft(QWidget):
         menu = QMenu()
 
         tb_action = QAction("(TensorBoard)", self)
-        # 기존 더블 클릭 핸들러 로직을 재사용합니다.
         tb_action.triggered.connect(lambda: self._show_tensorboard(index))
         menu.addAction(tb_action)
 
