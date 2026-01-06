@@ -9,7 +9,9 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QTextEdit,
     QGroupBox,
+    QPushButton,
 )
+from PyQt6.QtCore import pyqtSignal
 
 from core.engine.state import GameEvent
 from config import Phase, EventType
@@ -18,6 +20,8 @@ from .logEvent import LogEvent
 
 
 class LogRight(QWidget):
+    refresh_requested = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.events: List[LogEvent] = []
@@ -64,6 +68,11 @@ class LogRight(QWidget):
 
         filter_layout.addStretch()
         layout.addWidget(filter_group)
+
+        # 새로고침
+        self.btn_reset = QPushButton("새로고침")
+        filter_layout.addWidget(self.btn_reset)
+        self.btn_reset.clicked.connect(lambda: self.refresh_requested.emit())
 
         # 2. 로그 텍스트
         log_group = QGroupBox("게임 이벤트 로그")

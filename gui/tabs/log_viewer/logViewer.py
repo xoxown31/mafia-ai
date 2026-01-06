@@ -34,6 +34,7 @@ class LogViewer(QWidget):
 
         # 2. 우측 뷰어
         self.content_viewer = LogRight()
+        self.content_viewer.refresh_requested.connect(self._reload)
 
         # 3. 스플리터로 결합
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -59,7 +60,13 @@ class LogViewer(QWidget):
                 print(f"[GUI] Error killing TensorBoard: {e}")
 
         # 텐서보드 실행
-        cmd = ["tensorboard", "--logdir", str(tb_path), "--port", "6006"]
+        cmd = [
+            "tensorboard",
+            "--logdir",
+            str(tb_path),
+            "--port",
+            "6006",
+        ]
 
         try:
             self.tb_process = subprocess.Popen(cmd, shell=False)
@@ -112,6 +119,12 @@ class LogViewer(QWidget):
 
         # 우측 뷰어에 데이터 주입
         self.content_viewer.set_data(events, log_manager)
+
+    def _reload(self):
+        if self.current_log_dir:
+            self._load_logs(self.current_log_dir)
+        else:
+            print("[GUI] No log selected to refresh.")
 
     def closeEvent(self, event):
         if self.tb_process:
