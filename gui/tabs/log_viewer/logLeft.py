@@ -1,3 +1,5 @@
+import shutil
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -10,9 +12,11 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QTreeView,
     QHeaderView,
+    QMenu,
+    QMessageBox,
 )
-from PyQt6.QtCore import pyqtSignal, QDir
-from PyQt6.QtGui import QFileSystemModel
+from PyQt6.QtCore import pyqtSignal, QDir, Qt
+from PyQt6.QtGui import QFileSystemModel, QAction
 
 
 class LogLeft(QWidget):
@@ -32,13 +36,6 @@ class LogLeft(QWidget):
         # 1. 헤더
         header_layout = QHBoxLayout()
         header_layout.addWidget(QLabel("📂 로그 탐색기"))
-
-        btn_refresh = QPushButton("⟳")
-        btn_refresh.setFixedWidth(30)
-        btn_refresh.setToolTip("목록 새로고침")
-        btn_refresh.clicked.connect(self._refresh_tree)
-        header_layout.addWidget(btn_refresh)
-        layout.addLayout(header_layout)
 
         # 2. 경로 변경 버튼
         self.btn_change_root = QPushButton("다른 폴더 열기...")
@@ -72,6 +69,8 @@ class LogLeft(QWidget):
         )
         self.tree.clicked.connect(self._on_tree_clicked)
         self.tree.doubleClicked.connect(self._on_tree_double_clicked)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._open_context_menu)
 
         layout.addWidget(self.tree)
 
@@ -96,10 +95,6 @@ class LogLeft(QWidget):
         self.root_path = path
         self.model.setRootPath(str(path))
         self.tree.setRootIndex(self.model.index(str(path)))
-
-    def _refresh_tree(self):
-        if self.root_path:
-            self.model.setRootPath(str(self.root_path))
 
     def _change_root_directory(self):
         start_dir = self.root_path if self.root_path else Path.cwd()
@@ -130,3 +125,45 @@ class LogLeft(QWidget):
             print(f"[GUI] TensorBoard requested for: {tb_dir}")
         else:
             print(f"no tensorboard in folder (경로: {tb_dir})")
+
+    def _open_context_menu(self, position):
+        index = self.tree.indexAt(position)
+        if not index.isValid():
+            return
+
+        menu = QMenu()
+
+        delete_action = QAction("삭제", self)
+        delete_action.triggered.connect(lambda: self._delete_folder(index))
+        menu.addAction(delete_action)
+
+        menu.exec(self.tree.viewport().mapToGlobal(position))
+
+    def _delete_folder(self, index):
+        file_path = Path(self.model.filePath(index))
+
+        # 삭제 여부 재확인
+        reply = QMessageBox.question(
+            self,
+            "삭제 확인",
+            f"정말로 다음 항목을 영구 삭제하시겠습니까?\n\n{file_path.name}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # 삭제
+        try:
+            if file_path.is_dir():
+                shutil.rmtree(file_path)  # 폴더 삭제 (내부 파일 포함)
+            else:
+                os.remove(file_path)
+
+            print(f"[GUI] Deleted: {file_path}")
+
+        except Exception as e:
+            QMessageBox.critical(
+                self, "삭제 실패", f"삭제 중 오류가 발생했습니다:\n{e}"
+            )
