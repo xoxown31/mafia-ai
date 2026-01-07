@@ -41,7 +41,6 @@ class LogLeft(QWidget):
         # 2. 경로 변경 버튼
         self.btn_change_root = QPushButton("다른 폴더 열기...")
         self.btn_change_root.setStyleSheet("font-size: 11px; padding: 3px;")
-        self.btn_change_root.clicked.connect(self._change_root_directory)
         layout.addWidget(self.btn_change_root)
 
         # 3. 모델 설정
@@ -68,7 +67,6 @@ class LogLeft(QWidget):
         """
         )
         self.tree.clicked.connect(self._on_tree_clicked)
-        self.tree.doubleClicked.connect(self._on_tree_double_clicked)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._open_context_menu)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -97,14 +95,6 @@ class LogLeft(QWidget):
         self.model.setRootPath(str(path))
         self.tree.setRootIndex(self.model.index(str(path)))
 
-    def _change_root_directory(self):
-        start_dir = self.root_path if self.root_path else Path.cwd()
-        directory = QFileDialog.getExistingDirectory(
-            self, "로그 폴더 선택", str(start_dir)
-        )
-        if directory:
-            self.set_tree_root(Path(directory))
-
     def _on_tree_clicked(self, index):
         file_path = Path(self.model.filePath(index))
         target_dir = None
@@ -116,7 +106,7 @@ class LogLeft(QWidget):
         if target_dir:
             self.log_selected.emit(target_dir)
 
-    def _on_tree_double_clicked(self, index):
+    def _show_tensorboard(self, index):
         file_path = Path(self.model.filePath(index))
 
         tb_dir = file_path
@@ -133,6 +123,12 @@ class LogLeft(QWidget):
             return
 
         menu = QMenu()
+
+        tb_action = QAction("(TensorBoard)", self)
+        tb_action.triggered.connect(lambda: self._show_tensorboard(index))
+        menu.addAction(tb_action)
+
+        menu.addSeparator()
 
         selection = self.tree.selectionModel().selectedRows(0)
 

@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QPushButton,
 )
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, QTimer
 
 from core.engine.state import GameEvent
 from config import Phase, EventType
@@ -70,7 +70,10 @@ class LogRight(QWidget):
         layout.addWidget(filter_group)
 
         # 새로고침
-        self.btn_reset = QPushButton("새로고침")
+        self.btn_reset = QPushButton()
+        self.btn_reset.setText("⟳")
+        self.btn_reset.setFixedSize(50, 30)
+        self.btn_reset.clicked.connect(self._on_refresh_clicked)
         filter_layout.addWidget(self.btn_reset)
         self.btn_reset.clicked.connect(lambda: self.refresh_requested.emit())
 
@@ -194,6 +197,22 @@ class LogRight(QWidget):
         for et, cnt in counts.items():
             parts.append(f"{self._event_type_to_korean(et)}: {cnt}")
         self.stats_label.setText(" | ".join(parts))
+
+    def _on_refresh_clicked(self):
+        # 1. 실제 새로고침 신호 발송
+        self.refresh_requested.emit()
+
+        # 2. 버튼 모양 변경 (피드백)
+        original_text = "⟳"
+        self.btn_reset.setText("✔")
+        self.btn_reset.setStyleSheet("color: #4CAF50; font-weight: bold;")  # 초록색
+
+        # 3. 원상복구
+        QTimer.singleShot(1000, lambda: self._restore_button(original_text))
+
+    def _restore_button(self, text):
+        self.btn_reset.setText(text)
+        self.btn_reset.setStyleSheet("")
 
     # --- Helper Helpers ---
     def _format_event(self, event: GameEvent) -> str:
