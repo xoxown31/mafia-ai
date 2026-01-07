@@ -1,5 +1,7 @@
 import gymnasium as gym
 import supersuit as ss
+import os
+
 from typing import Dict, Any, List
 from pathlib import Path
 
@@ -81,6 +83,7 @@ class ExperimentManager:
         agents = {}
 
         if not self.player_configs:
+            # Fallback or error? main.py raised error.
             return {}
 
         for i, p_config in enumerate(self.player_configs):
@@ -95,8 +98,29 @@ class ExperimentManager:
                     hidden_dim=p_config.get("hidden_dim", 128),
                     num_layers=p_config.get("num_layers", 2),
                 )
+
+                load_path = p_config.get("load_model_path")
+
+                # 모델 경로
+                if load_path:
+                    if os.path.exists(load_path):
+                        try:
+                            agent.load(load_path)  # RLAgent의 load 메서드 호출
+                            print(
+                                f"[Experiment] Agent {i}: 모델 로드 성공 ({load_path})"
+                            )
+                        except Exception as e:
+                            print(f"[Experiment] Agent {i}: 모델 로드 실패! ({e})")
+                    else:
+                        print(
+                            f"[Experiment] Agent {i}: 경로에 파일이 없습니다 ({load_path})"
+                        )
+
                 agents[i] = agent
             elif p_config["type"] == "llm":
+
+            elif p_config["type"] == "llm":
+                # ... (LLM 에이전트 생성 코드는 그대로 둠)
                 agent = LLMAgent(player_id=i, logger=self.logger)
                 agents[i] = agent
             else:

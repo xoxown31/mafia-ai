@@ -98,10 +98,17 @@ class LogLeft(QWidget):
     def _on_tree_clicked(self, index):
         file_path = Path(self.model.filePath(index))
         target_dir = None
-        if file_path.is_file() and file_path.name == "events.jsonl":
+
+        if (
+            file_path.is_file()
+            and file_path.name.startswith("events")
+            and file_path.suffix == ".jsonl"
+        ):
             target_dir = file_path.parent
-        elif file_path.is_dir() and (file_path / "events.jsonl").exists():
-            target_dir = file_path
+        elif file_path.is_dir():
+            has_log_file = any(file_path.glob("events*.jsonl"))
+            if has_log_file:
+                target_dir = file_path
 
         if target_dir:
             self.log_selected.emit(target_dir)
@@ -124,7 +131,7 @@ class LogLeft(QWidget):
 
         menu = QMenu()
 
-        tb_action = QAction("(TensorBoard)", self)
+        tb_action = QAction("열기 (TensorBoard)", self)
         tb_action.triggered.connect(lambda: self._show_tensorboard(index))
         menu.addAction(tb_action)
 
