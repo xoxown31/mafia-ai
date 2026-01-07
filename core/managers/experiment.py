@@ -53,9 +53,9 @@ class ExperimentManager:
                     num_layers=p_config.get("num_layers", 2),
                 )
 
-                # 모델 경로
                 load_path = p_config.get("load_model_path")
 
+                # 모델 경로
                 if load_path:
                     if os.path.exists(load_path):
                         try:
@@ -71,7 +71,9 @@ class ExperimentManager:
                         )
 
                 agents[i] = agent
+
             elif p_config["type"] == "llm":
+                # ... (LLM 에이전트 생성 코드는 그대로 둠)
                 agent = LLMAgent(player_id=i, logger=self.logger)
                 agents[i] = agent
             else:
