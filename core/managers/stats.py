@@ -26,6 +26,9 @@ class StatsManager:
         game = env.game
         
         # --- 1. Agent Stats (Brain) ---
+        mafia_rewards = []
+        citizen_rewards = []
+
         for pid in rl_agents.keys():
             # Update recent wins
             win = 1 if is_wins.get(pid, False) else 0
@@ -35,17 +38,31 @@ class StatsManager:
             
             win_rate = np.mean(self.recent_wins[pid]) if self.recent_wins[pid] else 0.0
             
-            metrics[f"Agent_{pid}/Reward_Total"] = episode_rewards.get(pid, 0.0)
+            reward = episode_rewards.get(pid, 0.0)
+            metrics[f"Agent_{pid}/Reward_Total"] = reward
             metrics[f"Agent_{pid}/Win_Rate"] = win_rate
 
+            # Collect Team Rewards
+            if all_agents[pid].role == Role.MAFIA:
+                mafia_rewards.append(reward)
+            else:
+                citizen_rewards.append(reward)
+
         metrics["Reward/Total"] = sum(episode_rewards.values())
+        metrics["Reward/Mafia_Avg"] = np.mean(mafia_rewards) if mafia_rewards else 0.0
+        metrics["Reward/Citizen_Avg"] = np.mean(citizen_rewards) if citizen_rewards else 0.0
 
         # Team/Role Training Stats
         for role_key in ["Mafia", "Citizen"]:
-            if train_metrics[role_key]["loss"]:
-                metrics[f"Train/{role_key}_Loss"] = np.mean(train_metrics[role_key]["loss"])
-            if train_metrics[role_key]["entropy"]:
-                metrics[f"Train/{role_key}_Entropy"] = np.mean(train_metrics[role_key]["entropy"])
+            role_metrics = train_metrics.get(role_key, {})
+            if "loss" in role_metrics and role_metrics["loss"]:
+                metrics[f"Train/{role_key}_Loss"] = np.mean(role_metrics["loss"])
+            if "entropy" in role_metrics and role_metrics["entropy"]:
+                metrics[f"Train/{role_key}_Entropy"] = np.mean(role_metrics["entropy"])
+            if "approx_kl" in role_metrics and role_metrics["approx_kl"]:
+                metrics[f"Train/{role_key}_ApproxKL"] = np.mean(role_metrics["approx_kl"])
+            if "clip_frac" in role_metrics and role_metrics["clip_frac"]:
+                metrics[f"Train/{role_key}_ClipFrac"] = np.mean(role_metrics["clip_frac"])
 
         # --- 2. Game Stats (Behavior) ---
         metrics["Game/Duration"] = game.day

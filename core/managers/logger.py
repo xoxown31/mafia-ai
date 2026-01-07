@@ -72,22 +72,25 @@ class LogManager:
         if not self.writer:
             return
 
-        # Agent Total Rewards list generating
-        agent_reward_charts = [
-            f"Agent_{i}/Reward_Total" for i in range(config.game.PLAYER_COUNT)
-        ]
+        # Individual Agent Charts (Separate charts per agent)
+        individual_charts = {}
+        for i in range(config.game.PLAYER_COUNT):
+            individual_charts[f"Agent {i} Reward"] = ["Multiline", [f"Agent_{i}/Reward_Total"]]
 
         layout = {
             "Summary Dashboard": {
                 "Win Rates": ["Multiline", ["Game/Mafia_WinRate", "Game/Citizen_WinRate"]],
+                "Team Avg Reward": ["Multiline", ["Reward/Mafia_Avg", "Reward/Citizen_Avg"]],
                 "Total Reward": ["Multiline", ["Reward/Total"]],
                 "Game Duration": ["Multiline", ["Game/Duration", "Game/Avg_Day_When_Mafia_Wins", "Game/Avg_Day_When_Citizen_Wins"]],
             },
             "Training Details": {
                 "Team Loss": ["Multiline", ["Train/Mafia_Loss", "Train/Citizen_Loss"]],
                 "Team Entropy": ["Multiline", ["Train/Mafia_Entropy", "Train/Citizen_Entropy"]],
-                "Individual Rewards": ["Multiline", agent_reward_charts],
+                "Policy Trust (KL)": ["Multiline", ["Train/Mafia_ApproxKL", "Train/Citizen_ApproxKL"]],
+                "Clip Fraction": ["Multiline", ["Train/Mafia_ClipFrac", "Train/Citizen_ClipFrac"]],
             },
+            "Individual Agents": individual_charts,
             "Role Performance": {
                 "Doctor Stats": ["Multiline", ["Action/Doctor_Save_Rate", "Action/Doctor_Self_Heal_Rate"]],
                 "Police Stats": ["Multiline", ["Action/Police_Find_Rate"]],
@@ -101,6 +104,18 @@ class LogManager:
         }
 
         self.writer.add_custom_scalars(layout)
+
+    def log_histograms(self, episode: int, agent_id: int, tag: str, values: Any):
+        """
+        히스토그램 로깅
+        Args:
+            episode: 현재 에피소드
+            agent_id: 에이전트 ID
+            tag: 데이터 태그 (예: 'Action/Probs')
+            values: 데이터 값 (Tensor or Numpy array)
+        """
+        if self.writer:
+            self.writer.add_histogram(f"Agent_{agent_id}/{tag}", values, global_step=episode)
 
     def _load_narrative_templates(self) -> Dict[str, str]:
         """YAML에서 내러티브 템플릿 로드"""
