@@ -2,7 +2,7 @@
 LogManager: 통합 로그 및 모니터링 시스템
 
 주요 기능:
-1. JSONL 로깅: GameEvent를 .jsonl 형식으로 기록
+1. JSONL 로깅: GameEvent를 .jsonl 형식으로 기록 (분할 저장 지원)
 2. TensorBoard 통합: 학습 메트릭을 실시간 모니터링
 3. 내러티브 해석: 이벤트를 자연어 문장으로 변환 (GUI/LLM용)
 """
@@ -30,29 +30,35 @@ class LogManager:
         use_tensorboard: bool = True,
         write_mode: bool = True,
         overwrite: bool = False,
+        split_interval: int = 1000,  # [수정] 파일 분할 주기 추가 (기본 1000판)
     ):
         """
         Args:
             experiment_name: 실험 이름 (예: "ppo_mlp_20231231")
             log_dir: 로그 저장 디렉토리
             use_tensorboard: TensorBoard 사용 여부 (학습 에이전트가 없으면 False)
+            split_interval: 몇 에피소드마다 로그 파일을 나눌지 설정
         """
         self.experiment_name = experiment_name
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.use_tensorboard = use_tensorboard and write_mode
+        self.write_mode = write_mode  # [수정] 멤버 변수로 저장
         self.current_episode = 1
+        self.split_interval = split_interval  # [수정] 설정 저장
 
         self.narrative_templates = self._load_narrative_templates()
+        self.jsonl_file = None
+        self.jsonl_path = None
 
-        if write_mode:
+        if self.write_mode:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.session_dir = self.log_dir / f"{experiment_name}_{timestamp}"
             self.session_dir.mkdir(parents=True, exist_ok=True)
 
-            self.jsonl_path = self.session_dir / "events.jsonl"
-            self.jsonl_file = open(self.jsonl_path, "w", encoding="utf-8")
+            # [수정] 초기 파일 열기 (1번 에피소드부터 시작)
+            self._open_log_file(1)
 
             self.writer = None
             if self.use_tensorboard:
@@ -63,8 +69,24 @@ class LogManager:
             print(f"[LogManager] Initialized: {self.session_dir}")
         else:
             self.session_dir = None
-            self.jsonl_file = None
             self.writer = None
+
+    def _open_log_file(self, start_episode: int):
+        """[추가] 새로운 로그 파일을 엽니다."""
+        if not self.write_mode:
+            return
+
+        # 기존 파일이 열려있다면 닫기
+        if self.jsonl_file and not self.jsonl_file.closed:
+            self.jsonl_file.flush()
+            self.jsonl_file.close()
+
+        # 파일명 형식: events_ep{시작에피소드}.jsonl
+        # 예: events_ep1.jsonl, events_ep1001.jsonl
+        filename = f"events_ep{start_episode}.jsonl"
+        self.jsonl_path = self.session_dir / filename
+        self.jsonl_file = open(self.jsonl_path, "w", encoding="utf-8")
+        print(f"[LogManager] Created new log file: {filename}")
 
     def _load_narrative_templates(self) -> Dict[str, str]:
         """YAML에서 내러티브 템플릿 로드"""
@@ -100,19 +122,27 @@ class LogManager:
     def set_episode(self, episode: int):
         self.current_episode = episode
 
+        # [수정] 파일 로테이션 체크
+        # 예: interval=1000일 때, 1001, 2001, 3001... 에피소드에서 새 파일 생성
+        if self.write_mode and self.split_interval > 0 and episode > 1:
+            if (episode - 1) % self.split_interval == 0:
+                self._open_log_file(episode)
+
     def log_event(self, event: GameEvent):
         """GameEvent를 JSONL 형식으로 기록"""
         if self.jsonl_file:
             # 1. 이벤트를 딕셔너리로 변환
-            # (Pydantic v2는 model_dump(), v1은 dict() 사용. 안전하게 dict() 권장)
             data = event.dict() if hasattr(event, "dict") else event.model_dump()
 
-            # 2. [핵심] 딕셔너리에 episode 필드 강제 주입
+            # 2. 딕셔너리에 episode 필드 강제 주입
             data["episode"] = self.current_episode
 
             # 3. 파일 쓰기
             self.jsonl_file.write(json.dumps(data, ensure_ascii=False) + "\n")
-            self.jsonl_file.flush()
+
+            # [최적화] 매 이벤트마다 flush하면 I/O 병목으로 다운될 수 있어 제거함.
+            # 대신 log_metrics 호출 시(에피소드 종료 시) flush 합니다.
+            # self.jsonl_file.flush()
 
     def log_metrics(
         self,
@@ -136,18 +166,13 @@ class LogManager:
         for key, value in kwargs.items():
             self.writer.add_scalar(f"Metrics/{key}", value, episode)
 
+        # [추가] 에피소드가 끝날 때마다 파일 버퍼를 비워 안전하게 저장
+        if self.jsonl_file:
+            self.jsonl_file.flush()
+
     def interpret_event(self, event: GameEvent) -> str:
         """
         GameEvent를 자연어 문장으로 변환 (데이터 주도 방식)
-
-        이 메서드는 GUI 리플레이와 LLM 에이전트의 프롬프트 생성에 사용됩니다.
-        로그 파일에는 저장되지 않습니다.
-
-        Args:
-            event: 해석할 게임 이벤트
-
-        Returns:
-            자연어 문장
         """
 
         if event.phase == Phase.GAME_END:
@@ -216,9 +241,9 @@ class LogManager:
         return role_names.get(role, str(role))
 
     def load_events(self) -> List[GameEvent]:
-        """JSONL 파일에서 모든 이벤트 로드"""
+        """JSONL 파일에서 모든 이벤트 로드 (현재 활성화된 파일만 로드됨)"""
         events = []
-        if not self.jsonl_path.exists():
+        if self.jsonl_path is None or not self.jsonl_path.exists():
             return events
 
         with open(self.jsonl_path, "r", encoding="utf-8") as f:
@@ -236,6 +261,7 @@ class LogManager:
     def close(self):
         """리소스 정리"""
         if self.jsonl_file and not self.jsonl_file.closed:
+            self.jsonl_file.flush()
             self.jsonl_file.close()
         if self.writer:
             self.writer.close()
