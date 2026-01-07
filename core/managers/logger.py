@@ -95,6 +95,7 @@ class LogManager:
                 "Doctor Stats": ["Multiline", ["Action/Doctor_Save_Rate", "Action/Doctor_Self_Heal_Rate"]],
                 "Police Stats": ["Multiline", ["Action/Police_Find_Rate"]],
                 "Mafia Stats": ["Multiline", ["Action/Mafia_Kill_Success_Rate"]],
+                "Citizen Survival": ["Multiline", ["Game/Citizen_Survival_Rate"]],
             },
             "Behavior Analysis": {
                 "Voting Behavior": ["Multiline", ["Vote/Abstain_Rate", "Game/Execution_Frequency"]],

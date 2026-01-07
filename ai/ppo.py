@@ -136,10 +136,14 @@ class PPO:
         
         avg_loss_all_epochs = 0
         avg_entropy_all_epochs = 0
+        avg_kl_all_epochs = 0
+        avg_clip_frac_all_epochs = 0
 
         for _ in range(self.k_epochs):
             total_loss = 0
             total_entropy = 0
+            total_approx_kl = 0
+            total_clip_frac = 0
             self.optimizer.zero_grad()
             
             for i in range(len(ep_states_list)):
@@ -168,6 +172,17 @@ class PPO:
                 
                 ratios = torch.exp(logprobs - ep_old_logprobs)
                 
+                # Track KL & Clip Fraction
+                with torch.no_grad():
+                    # KL Divergence
+                    log_ratio = logprobs - ep_old_logprobs
+                    approx_kl = ((ratios - 1) - log_ratio).mean()
+                    total_approx_kl += approx_kl
+
+                    # Clip Fraction
+                    clip_frac = (torch.abs(ratios - 1.0) > self.eps_clip).float().mean()
+                    total_clip_frac += clip_frac
+
                 advantages = ep_rewards - state_values.detach()
                 surr1 = ratios * advantages
                 surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
@@ -179,6 +194,10 @@ class PPO:
             if len(ep_states_list) > 0:
                 avg_loss = total_loss / len(ep_states_list)
                 avg_entropy = total_entropy / len(ep_states_list)
+                
+                # KL & Clip 평균 계산
+                avg_kl = total_approx_kl / len(ep_states_list)
+                avg_clip_frac = total_clip_frac / len(ep_states_list)
 
                 avg_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
@@ -186,13 +205,18 @@ class PPO:
 
                 avg_loss_all_epochs += avg_loss.item()
                 avg_entropy_all_epochs += avg_entropy.item()
+                avg_kl_all_epochs += avg_kl.item()
+                avg_clip_frac_all_epochs += avg_clip_frac.item()
             
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.buffer.clear()
 
+        divisor = self.k_epochs if self.k_epochs > 0 else 1
         return {
-            "loss": avg_loss_all_epochs / self.k_epochs if self.k_epochs > 0 else 0,
-            "entropy": avg_entropy_all_epochs / self.k_epochs if self.k_epochs > 0 else 0
+            "loss": avg_loss_all_epochs / divisor,
+            "entropy": avg_entropy_all_epochs / divisor,
+            "approx_kl": avg_kl_all_epochs / divisor, 
+            "clip_frac": avg_clip_frac_all_epochs / divisor
         }
     
     def _split_episodes(self, data_list, is_terminals):

@@ -1,5 +1,6 @@
 import threading
 import os
+import numpy as np
 from typing import TYPE_CHECKING, Dict, Any, List, Optional
 from core.agents.llm_agent import LLMAgent
 from config import Role, EventType, Phase, config
@@ -68,6 +69,13 @@ def train(
         episode_rewards = {pid: 0.0 for pid in rl_agents.keys()}
         is_wins = {pid: False for pid in rl_agents.keys()}
         obs_dict, _ = env.reset()
+
+        # [Role Sync] env.game 내부에서 결정된 역할을 외부 에이전트에게 동기화
+        if hasattr(env, "game") and env.game.players:
+            for pid, inner_p in enumerate(env.game.players):
+                if pid in all_agents:
+                    all_agents[pid].role = inner_p.role
+                    # rl_agents는 all_agents의 참조를 공유하므로 자동 반영됨
 
         while not done:
             if stop_event and stop_event.is_set():
@@ -166,8 +174,8 @@ def train(
 
         # 에피소드 종료 후 학습 및 메트릭 수집
         train_metrics = {
-            "Mafia": {"loss": [], "entropy": []},
-            "Citizen": {"loss": [], "entropy": []},
+            "Mafia": {"loss": [], "entropy": [], "approx_kl": [], "clip_frac": []},
+            "Citizen": {"loss": [], "entropy": [], "approx_kl": [], "clip_frac": []},
         }
 
         for agent in rl_agents.values():
@@ -179,6 +187,10 @@ def train(
                         train_metrics[role_key]["loss"].append(res["loss"])
                     if "entropy" in res:
                         train_metrics[role_key]["entropy"].append(res["entropy"])
+                    if "approx_kl" in res:
+                        train_metrics[role_key]["approx_kl"].append(res["approx_kl"])
+                    if "clip_frac" in res:
+                        train_metrics[role_key]["clip_frac"].append(res["clip_frac"])
 
         # StatsManager를 통해 통계 계산
         metrics = stats_manager.calculate_stats(
@@ -202,6 +214,19 @@ def train(
             win_rate=rep_win_rate,
             **metrics,
         )
+
+        # 히스토그램 로깅 (Rewards Distribution)
+        if logger.use_tensorboard and logger.writer:
+            rewards_list = np.array(list(episode_rewards.values()))
+            logger.writer.add_histogram("Reward/Distribution", rewards_list, global_step=episode)
+            
+            mafia_rewards = [r for pid, r in episode_rewards.items() if all_agents[pid].role == Role.MAFIA]
+            citizen_rewards = [r for pid, r in episode_rewards.items() if all_agents[pid].role != Role.MAFIA]
+            
+            if mafia_rewards:
+                logger.writer.add_histogram("Reward/Mafia_Distribution", np.array(mafia_rewards), global_step=episode)
+            if citizen_rewards:
+                logger.writer.add_histogram("Reward/Citizen_Distribution", np.array(citizen_rewards), global_step=episode)
 
         if episode % 100 == 0:
             # 모든 에이전트 상태 출력

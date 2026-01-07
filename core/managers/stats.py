@@ -106,6 +106,11 @@ class StatsManager:
         metrics["Game/Avg_Day_When_Mafia_Wins"] = np.mean(self.mafia_win_days) if self.mafia_win_days else 0.0
         metrics["Game/Avg_Day_When_Citizen_Wins"] = np.mean(self.citizen_win_days) if self.citizen_win_days else 0.0
 
+        # Citizen Survival Rate
+        initial_citizens = sum(1 for p in game.players if p.role != Role.MAFIA)
+        current_citizens = sum(1 for p in game.players if p.role != Role.MAFIA and p.alive)
+        metrics["Game/Citizen_Survival_Rate"] = current_citizens / initial_citizens if initial_citizens > 0 else 0.0
+
         # Action Stats
         action_metrics = self._analyze_history(game)
         metrics.update(action_metrics)
