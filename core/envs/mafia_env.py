@@ -82,10 +82,14 @@ class MafiaEnv(ParallelEnv):
         self.last_protected_player = None
         self.attack_was_blocked = False
 
-        observations = {
-            agent: self._encode_observation(self._agent_to_id(agent))
-            for agent in self.agents
-        }
+        observations = {}
+        for agent in self.agents:
+            pid = self._agent_to_id(agent)
+            observations[agent] = {
+                "observation": self._encode_observation(pid),
+                "action_mask": self._get_action_mask(pid),  # 액션 마스크 포함 필수
+            }
+
         infos = {agent: {} for agent in self.agents}
 
         return observations, infos

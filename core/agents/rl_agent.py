@@ -16,9 +16,9 @@ from core.engine.state import GameStatus, GameEvent, GameAction
 class RLAgent(BaseAgent):
     """
     PPO, REINFORCE, RNN을 모두 지원하는 통합 RL 에이전트
-    
+
     Multi-Discrete 액션 공간 지원: [Target, Role]
-    
+
     Args:
         player_id: 플레이어 ID
         role: 플레이어 역할
@@ -48,7 +48,7 @@ class RLAgent(BaseAgent):
         self.state_dim = state_dim
         self.action_dims = action_dims
         self.action_dim = sum(action_dims)
-        
+
         self.policy = DynamicActorCritic(
             state_dim=state_dim,
             action_dims=action_dims,
@@ -67,10 +67,11 @@ class RLAgent(BaseAgent):
         self.hidden_state = None
         self.current_action = None  # 현재 액션 저장
 
-    def reset_hidden(self):
+    def reset_hidden(self, batch_size: int = 1):
         """에피소드 시작 시 RNN 은닉 상태 초기화"""
         if self.backbone in ["lstm", "gru"]:
-            self.hidden_state = self.policy.init_hidden(batch_size=1)
+            # 전달받은 batch_size를 정책 모델에 전달
+            self.hidden_state = self.policy.init_hidden(batch_size=batch_size)
         else:
             self.hidden_state = None
 
@@ -89,8 +90,10 @@ class RLAgent(BaseAgent):
 
         # 폴백: PASS 액션
         return GameAction(target_id=-1, claim_role=None)
-    
-    def select_action_vector(self, state, action_mask: Optional[np.ndarray] = None) -> List[int]:
+
+    def select_action_vector(
+        self, state, action_mask: Optional[np.ndarray] = None
+    ) -> List[int]:
         """
         상태를 받아 Multi-Discrete 액션 벡터를 선택
 
@@ -107,24 +110,26 @@ class RLAgent(BaseAgent):
         else:
             obs = state
             mask = action_mask
-        
-        state_dict = {'observation': obs, 'action_mask': mask}
-        
+
+        state_dict = {"observation": obs, "action_mask": mask}
+
         # learner.select_action returns ([target, role], hidden_state)
-        action_vector, self.hidden_state = self.learner.select_action(state_dict, self.hidden_state)
-        
+        action_vector, self.hidden_state = self.learner.select_action(
+            state_dict, self.hidden_state
+        )
+
         return action_vector
-    
+
     def store_reward(self, reward: float, is_terminal: bool = False):
         """보상 저장: 알고리즘별 버퍼 위치 확인"""
-        if hasattr(self.learner, 'buffer'):
+        if hasattr(self.learner, "buffer"):
             # PPO의 경우 buffer 객체 내의 리스트 사용
             self.learner.buffer.rewards.append(reward)
             self.learner.buffer.is_terminals.append(is_terminal)
         else:
             # REINFORCE 등 buffer가 없는 경우 직접 저장
             self.learner.rewards.append(reward)
-    
+
     def update(self):
         """학습 수행 - 알고리즘 객체에 위임"""
         return self.learner.update()
