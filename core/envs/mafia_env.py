@@ -63,14 +63,24 @@ class MafiaEnv(ParallelEnv):
             for agent in self.possible_agents
         }
 
-        # 이전 턴의 투표 기록 저장 (삭제됨)
-        # self.last_vote_record = np.zeros((config.game.PLAYER_COUNT, config.game.PLAYER_COUNT), dtype=np.float32)
+        # 상태 추적 변수 (보상 계산용)
+        self.last_executed_player = None
+        self.last_killed_player = None
+        self.last_investigated_player = None
+        self.last_protected_player = None
+        self.attack_was_blocked = False
 
     def reset(self, seed=None, options=None):
         # PettingZoo API: reset returns (observations, infos)
         self.agents = self.possible_agents[:]
         self.game.reset()
-        # self.last_vote_record = np.zeros((config.game.PLAYER_COUNT, config.game.PLAYER_COUNT), dtype=np.float32)
+
+        # 상태 초기화
+        self.last_executed_player = None
+        self.last_killed_player = None
+        self.last_investigated_player = None
+        self.last_protected_player = None
+        self.attack_was_blocked = False
 
         observations = {
             agent: self._encode_observation(self._agent_to_id(agent))
@@ -96,11 +106,14 @@ class MafiaEnv(ParallelEnv):
                 pass
 
         # 턴 진행 전 상태 저장 (보상 계산용)
-        prev_alive = [p.alive for p in self.game.players]
         prev_phase = self.game.phase
+        prev_alive_count = sum(1 for p in self.game.players if p.alive)
 
         # 게임 진행
         status, is_over, is_win = self.game.step_phase(engine_actions)
+
+        # 상태 변화 추적
+        self._track_state_changes(prev_phase, prev_alive_count, engine_actions)
 
         observations = {}
         rewards = {}
@@ -122,7 +135,7 @@ class MafiaEnv(ParallelEnv):
                 my_win = False
 
             rewards[agent] = self._calculate_reward(
-                pid, prev_alive, prev_phase, engine_actions.get(pid), is_over, is_win
+                pid, prev_phase, engine_actions.get(pid), is_over, my_win
             )
             terminations[agent] = is_over
             truncations[agent] = False
@@ -161,100 +174,148 @@ class MafiaEnv(ParallelEnv):
     def _id_to_agent(self, agent_id):
         return f"player_{agent_id}"
 
-    # === Helper Methods (Copied and adapted from previous implementation) ===
+    # === 상태 추적 ===
 
-    def _calculate_reward(
-        self, agent_id, prev_alive, prev_phase, mafia_action, done, win
-    ):
+    def _track_state_changes(self, prev_phase, prev_alive_count, actions):
+        """
+        이전 페이즈와 현재 상태를 비교하여 중요한 이벤트를 추적
+        """
+        current_alive_count = sum(1 for p in self.game.players if p.alive)
+
+        # 처형 추적
+        if prev_phase == Phase.DAY_VOTE and self.game.phase == Phase.DAY_EXECUTE:
+            # 투표로 처형된 플레이어 찾기
+            for player in self.game.players:
+                if not player.alive and player.vote_count > 0:
+                    self.last_executed_player = player
+                    break
+
+        # 밤 사망 추적
+        if prev_phase == Phase.NIGHT and current_alive_count < prev_alive_count:
+            # 마피아에게 죽은 플레이어 찾기
+            for player in self.game.players:
+                if not player.alive and player != self.last_executed_player:
+                    self.last_killed_player = player
+                    break
+
+        # 보호 성공 추적 (밤인데 아무도 안 죽음)
+        if prev_phase == Phase.NIGHT and current_alive_count == prev_alive_count:
+            mafia_target = None
+            doctor_target = None
+
+            for pid, action in actions.items():
+                player = self.game.players[pid]
+                if not player.alive:
+                    continue
+
+                target_id = -1
+                if isinstance(action, dict):
+                    target_id = action.get("target_id", -1)
+                elif hasattr(action, "target_id"):
+                    target_id = action.target_id
+
+                if target_id != -1 and 0 <= target_id < len(self.game.players):
+                    if player.role == Role.MAFIA:
+                        mafia_target = target_id
+                    elif player.role == Role.DOCTOR:
+                        doctor_target = target_id
+
+            # 마피아 타겟과 의사 타겟이 같으면 보호 성공
+            if mafia_target is not None and doctor_target is not None:
+                if mafia_target == doctor_target:
+                    self.attack_was_blocked = True
+                    self.last_protected_player = self.game.players[doctor_target]
+        else:
+            self.attack_was_blocked = False
+            self.last_protected_player = None
+
+    # === 단순화된 보상 시스템 ===
+
+    def _calculate_reward(self, agent_id, prev_phase, my_action, done, win):
+        """
+        3가지 핵심 보상만 사용:
+        1. 게임 승패 (주요 신호)
+        2. 마피아 제거 기여
+        3. 역할별 핵심 목표 달성
+        """
         reward = 0.0
         agent = self.game.players[agent_id]
-        role = agent.role
 
-        # 1. 승패 보상 (Sparse Reward)
+        # === 보상 1: 게임 승패 (가장 중요) ===
         if done:
-            is_mafia_team = role == Role.MAFIA
-            my_win = (win and not is_mafia_team) or (not win and is_mafia_team)
+            reward += 10.0 if win else -10.0
 
-            if my_win:
-                reward += 50.0
+        # === 보상 2: 마피아 제거 기여 ===
+        if prev_phase == Phase.DAY_VOTE and self.last_executed_player:
+            reward += self._calculate_execution_reward(agent_id, my_action)
+
+        # === 보상 3: 역할별 핵심 목표 달성 ===
+        if prev_phase == Phase.NIGHT:
+            reward += self._calculate_night_action_reward(agent_id, my_action)
+
+        return reward
+
+    def _calculate_execution_reward(self, agent_id, my_action):
+        """
+        처형 단계에서 보상 계산
+        - 마피아 처형 성공 시 투표한 시민팀에게 보상
+        - 시민 처형 시 페널티
+        """
+        if not self.last_executed_player:
+            return 0.0
+
+        reward = 0.0
+        agent = self.game.players[agent_id]
+        executed = self.last_executed_player
+
+        # 내가 이 플레이어에게 투표했는가?
+        did_vote = False
+        if my_action:
+            target_id = -1
+            if isinstance(my_action, dict):
+                target_id = my_action.get("target_id", -1)
+            elif hasattr(my_action, "target_id"):
+                target_id = my_action.target_id
+
+            did_vote = target_id == executed.id
+
+        if not did_vote:
+            return 0.0
+
+        # 역할에 따른 보상
+        if agent.role != Role.MAFIA:
+            # 시민팀: 마피아 처형 시 보상
+            if executed.role == Role.MAFIA:
+                reward += 4.0
+            # 중요 역할 처형 시 큰 페널티
+            elif executed.role in [Role.POLICE, Role.DOCTOR]:
+                reward -= 3.0
+            # 일반 시민 처형 시 작은 페널티
+            elif executed.role == Role.CITIZEN:
+                reward -= 1.0
+        else:
+            # 마피아: 시민 처형 시 보상, 동료 마피아 처형 시 페널티
+            if executed.role == Role.MAFIA:
+                reward -= 5.0  # 동료 배신
+            elif executed.role in [Role.POLICE, Role.DOCTOR]:
+                reward += 2.0  # 중요 역할 제거
             else:
-                reward -= 50.0
-
-        # 3. 역할 기반 행동 보상
-        action_target = -1
-        if isinstance(mafia_action, dict):
-            action_target = mafia_action.get("target_id", -1)
-        elif hasattr(mafia_action, "target_id"):
-            action_target = mafia_action.target_id
-
-        if role == Role.CITIZEN:
-            reward += self._calculate_citizen_reward(action_target, prev_phase)
-        elif role == Role.MAFIA:
-            reward += self._calculate_mafia_reward(action_target, prev_phase)
-        elif role == Role.POLICE:
-            reward += self._calculate_police_reward(action_target, prev_phase)
-        elif role == Role.DOCTOR:
-            reward += self._calculate_doctor_reward(
-                prev_alive, action_target, prev_phase
-            )
-
-        # 4. 기만 및 설득 보상 (New)
-        reward += self._calculate_deception_reward(agent_id, role, prev_phase)
-        reward += self._calculate_persuasion_reward(
-            agent_id, role, prev_phase, mafia_action
-        )
+                reward += 1.0  # 일반 시민 제거
 
         return reward
 
-    def _calculate_deception_reward(self, agent_id, role, phase):
+    def _calculate_night_action_reward(self, agent_id, my_action):
         """
-        마피아 기만 보상:
-        - 낮 토론 단계에서 타인이 나를 경찰/의사로 지목 시 보상
-        - 투표 단계에서 나의 득표수가 생존자 평균보다 낮을 경우 보상
+        밤 행동 보상 계산
+        - 마피아: 성공적인 킬
+        - 경찰: 마피아 발견
+        - 의사: 보호 성공
         """
-        if role != Role.MAFIA:
+        if not my_action:
             return 0.0
 
         reward = 0.0
-
-        # 1. 낮 토론 단계: 타인이 나를 경찰/의사로 지목
-        if phase == Phase.DAY_DISCUSSION:
-            if self.game.history:
-                last_evt = self.game.history[-1]
-                if (
-                    last_evt.event_type == EventType.CLAIM
-                    and last_evt.target_id == agent_id
-                    and last_evt.actor_id != agent_id
-                ):
-
-                    if last_evt.value in [Role.POLICE, Role.DOCTOR]:
-                        reward += 0.5  # 기만 성공
-
-        # 2. 투표 단계: 득표수가 평균보다 낮음
-        elif phase == Phase.DAY_VOTE:
-            alive_players = [p for p in self.game.players if p.alive]
-            if not alive_players:
-                return 0.0
-
-            avg_votes = sum(p.vote_count for p in alive_players) / len(alive_players)
-            my_votes = self.game.players[agent_id].vote_count
-
-            if my_votes < avg_votes:
-                reward += 0.2
-
-        return reward
-
-    def _calculate_persuasion_reward(self, agent_id, role, phase, my_action):
-        """
-        시민 설득 보상:
-        - 내가 지목한 타겟에게 다른 플레이어들이 동조하여 투표하거나 지목할 경우 보상
-        """
-        # 마피아도 설득이 필요하지만, 요구사항에 따라 시민 팀에게만 적용하거나
-        # 혹은 전체에게 적용할 수도 있음. 여기서는 시민 팀(시민, 경찰, 의사)에게 적용.
-        if role == Role.MAFIA:
-            return 0.0
-
-        reward = 0.0
+        agent = self.game.players[agent_id]
 
         target_id = -1
         if isinstance(my_action, dict):
@@ -262,117 +323,42 @@ class MafiaEnv(ParallelEnv):
         elif hasattr(my_action, "target_id"):
             target_id = my_action.target_id
 
-        if target_id == -1:
+        if target_id == -1 or target_id >= len(self.game.players):
             return 0.0
 
-        if phase == Phase.DAY_VOTE:
-            # 타겟의 득표수 확인 (나 제외)
-            target_votes = self.game.players[target_id].vote_count
-            if target_votes > 1:  # 나 말고 최소 1명 더
-                reward += 0.1 * (target_votes - 1)
+        target = self.game.players[target_id]
 
-        elif phase == Phase.DAY_DISCUSSION:
-            # 최근 history 확인
-            count = 0
-            recent_events = self.game.history[-config.game.PLAYER_COUNT :]
-            for evt in recent_events:
-                if (
-                    evt.event_type == EventType.CLAIM
-                    and evt.target_id == target_id
-                    and evt.actor_id != agent_id
-                ):
-                    count += 1
-
-            if count > 0:
-                reward += 0.2 * count
-
-        return reward
-
-    def _calculate_citizen_reward(self, action, phase):
-        if action == -1:
-            return 0.0
-        reward = 0.0
-        if 0 <= action < len(self.game.players):
-            target = self.game.players[action]
-            if phase == Phase.DAY_VOTE:
-                if target.role == Role.MAFIA:
-                    reward += 1.5
-                    if not target.alive:
-                        reward += 1.0
-                elif target.role in [Role.POLICE, Role.DOCTOR]:
-                    reward -= 1.5
-                elif target.role == Role.CITIZEN:
-                    reward -= 1.0
-            elif phase == Phase.DAY_DISCUSSION:
-                if target.role == Role.MAFIA:
-                    reward += 1.0
-                elif target.role in [Role.POLICE, Role.DOCTOR]:
-                    reward -= 0.5
-        return reward
-
-    def _calculate_mafia_reward(self, action, phase):
-        if action == -1:
-            return 0.0
-        reward = 0.0
-        if 0 <= action < len(self.game.players):
-            target = self.game.players[action]
-            if phase == Phase.DAY_VOTE:
+        # 마피아: 킬 성공
+        if agent.role == Role.MAFIA:
+            if self.last_killed_player and self.last_killed_player.id == target_id:
+                # 중요 역할 제거 시 더 큰 보상
                 if target.role == Role.POLICE:
-                    reward += 1.0
-                    if not target.alive:
-                        reward += 0.5
+                    reward += 4.0
                 elif target.role == Role.DOCTOR:
-                    reward += 0.5
-                    if not target.alive:
-                        reward += 0.5
-                elif target.role == Role.CITIZEN:
-                    reward += 0.3
-                    if not target.alive:
-                        reward += 0.1
-                elif target.role == Role.MAFIA:
-                    reward -= 2.5
-            elif phase == Phase.NIGHT:
-                if target.role == Role.POLICE:
-                    reward += 2.5
-                    if not target.alive:
-                        reward += 1.5
-                elif target.role == Role.DOCTOR:
-                    reward += 1.8
-                    if not target.alive:
-                        reward += 1.2
-                elif target.role == Role.CITIZEN:
-                    reward += 0.8
-                    if not target.alive:
-                        reward += 0.5
-        return reward
-
-    def _calculate_police_reward(self, action, phase):
-        if action == -1 or phase != Phase.NIGHT:
-            return 0.0
-        reward = 0.0
-        if 0 <= action < len(self.game.players):
-            target = self.game.players[action]
-            if target.role == Role.MAFIA:
-                reward += 3.0
-        return reward
-
-    def _calculate_doctor_reward(self, prev_alive, action, phase):
-        if action == -1 or phase != Phase.NIGHT:
-            return 0.0
-        reward = 0.0
-        current_alive_count = sum(p.alive for p in self.game.players)
-        prev_alive_count = sum(prev_alive)
-        if current_alive_count == prev_alive_count:
-            reward += 2.5
-            if 0 <= action < len(self.game.players):
-                target = self.game.players[action]
-                if target.role == Role.POLICE:
+                    reward += 3.0
+                else:
                     reward += 2.0
-                elif target.role == Role.DOCTOR:
-                    reward += 1.5
-                elif target.role == Role.CITIZEN:
-                    reward += 1.0
+
+        # 경찰: 마피아 조사 성공
+        elif agent.role == Role.POLICE:
+            if target.role == Role.MAFIA and target.alive:
+                reward += 3.0
+
+        # 의사: 보호 성공
+        elif agent.role == Role.DOCTOR:
+            if self.attack_was_blocked and self.last_protected_player:
+                if self.last_protected_player.id == target_id:
+                    # 중요 역할 보호 시 더 큰 보상
+                    if target.role == Role.POLICE:
+                        reward += 4.0
+                    elif target.role == Role.DOCTOR:
+                        reward += 3.0
+                    else:
+                        reward += 2.5
+
         return reward
+
+    # === 관측 및 액션 마스크 ===
 
     def _encode_observation(
         self, agent_id: int, target_event: Optional[GameEvent] = None
