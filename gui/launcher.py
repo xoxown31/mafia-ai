@@ -98,7 +98,7 @@ class Launcher(QWidget):
         quick_controls = QHBoxLayout()
 
         self.quick_type_combo = QComboBox()
-        self.quick_type_combo.addItems(["LLM", "RL"])
+        self.quick_type_combo.addItems(["RL", "LLM"])
         quick_controls.addWidget(QLabel("Type:"))
         quick_controls.addWidget(self.quick_type_combo)
 
