@@ -37,7 +37,7 @@ def run_simulation(args):
             train(env, rl_agents, agents, args, experiment.logger, stop_event=STOP)
 
         elif args.mode == "test":
-            test(env, agents, args, stop_event=STOP)
+            test(env, agents, args, logger=experiment.logger, stop_event=STOP)
 
     finally:
         # 리소스 정리
