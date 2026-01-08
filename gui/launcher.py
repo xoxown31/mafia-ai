@@ -66,7 +66,7 @@ class Launcher(QWidget):
         mode_layout = QHBoxLayout()
         self.radio_train = QRadioButton("학습 (Train)")
         self.radio_test = QRadioButton("평가 (Test)")
-        self.radio_test.setChecked(True)
+        self.radio_train.setChecked(True)
 
         btn_group = QButtonGroup(self)
         btn_group.addButton(self.radio_train)
@@ -82,7 +82,7 @@ class Launcher(QWidget):
         ep_layout = QVBoxLayout()
         self.ep_spin = QSpinBox()
         self.ep_spin.setRange(1, 10000)
-        self.ep_spin.setValue(1)
+        self.ep_spin.setValue(1000)
         ep_layout.addWidget(self.ep_spin)
         ep_group.setLayout(ep_layout)
         layout.addWidget(ep_group)
