@@ -72,7 +72,12 @@ def train(
         # 이렇게 하면 나중에 (9,) 그릇에 (9,) 데이터를 담게 되어 에러가 안 남
         current_rewards[pid] = np.zeros(my_batch_size)
 
-    while completed_episodes < total_episodes:
+    while True:
+        is_target_still_running = any(eid <= total_episodes for eid in slot_episode_ids)
+        
+        if completed_episodes >= total_episodes and not is_target_still_running:
+            break
+
         if stop_event and stop_event.is_set():
             break
 
