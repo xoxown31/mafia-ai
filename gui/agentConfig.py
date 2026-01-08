@@ -30,7 +30,7 @@ class AgentConfigWidget(QGroupBox):
         # [Type 설정]
         top_layout.addWidget(QLabel("Type:"))
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["LLM", "RL"])
+        self.type_combo.addItems(["RL", "LLM"])
         self.type_combo.setSizePolicy(
             self.type_combo.sizePolicy().horizontalPolicy(),
             self.type_combo.sizePolicy().verticalPolicy(),

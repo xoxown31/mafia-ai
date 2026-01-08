@@ -2,6 +2,8 @@ import json
 import subprocess  # [추가] 프로세스 실행용
 import webbrowser  # [추가] 브라우저 오픈용
 import sys
+import socket
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -49,62 +51,46 @@ class LogViewer(QWidget):
         self.current_log_dir = path
         self._load_logs(path)
 
-    def _launch_tensorboard(self, tb_path: Path):
-        if sys.platform == "win32":
-            try:
-                subprocess.run(
-                    ["taskkill", "/F", "/IM", "tensorboard.exe"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                pass
+    def _find_free_port(self):
+        """비어있는 포트를 찾아 반환"""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            return s.getsockname()[1]
 
-        # 맥(Mac) / 리눅스(Linux)인 경우
-        else:
-            try:
-                subprocess.run(
-                    ["pkill", "-f", "tensorboard"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
-                pass
-
-        # 초기화
+    def shutdown_tensorboard(self):
+        """6006 포트를 쓰기 위해 기존 텐서보드를 무조건 사살"""
+        # 1. 내가 띄운 프로세스 먼저 종료 시도
         if self.tb_process:
-            try:
-                self.tb_process.terminate()
-                self.tb_process = None
-                print("[GUI] Stopped previous TensorBoard process.")
-            except Exception as e:
-                print(f"[GUI] Error killing TensorBoard: {e}")
+            self.tb_process.terminate()
+            self.tb_process = None
 
-        # 텐서보드 실행
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "tensorboard.exe", "/T"],
+            stdout=subprocess.DEVNULL,  # 성공 메세지 숨김
+            stderr=subprocess.DEVNULL,  # 에러 메세지 숨김
+            shell=True,
+        )
+
+    def _launch_tensorboard(self, tb_path: Path):
+        self.shutdown_tensorboard()
+
+        time.sleep(1.0)
+
+        # 포트 실행
         cmd = [
             "tensorboard",
             "--logdir",
             str(tb_path),
             "--port",
             "6006",
+            "--reload_interval",
+            "5",
         ]
 
-        try:
-            self.tb_process = subprocess.Popen(cmd, shell=False)
-
-            print(f"[GUI] Started TensorBoard on port 6006 for {tb_path.name}")
-
-            # 브라우저 열기
-            webbrowser.open("http://localhost:6006")
-
-        except FileNotFoundError:
-            QMessageBox.warning(
-                self,
-                "오류",
-                "tensorboard 명령을 찾을 수 없습니다.\n환경 변수에 등록되어 있는지 확인하세요.",
-            )
-        except Exception as e:
-            QMessageBox.critical(self, "오류", f"텐서보드 실행 실패:\n{e}")
+        self.tb_process = subprocess.Popen(
+            cmd, shell=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        webbrowser.open("http://localhost:6006")
 
     def _load_logs(self, log_dir: Path):
         """파일 로드 및 파싱 -> ContentWidget으로 전달"""
@@ -153,6 +139,5 @@ class LogViewer(QWidget):
             print("[GUI] No log selected to refresh.")
 
     def closeEvent(self, event):
-        if self.tb_process:
-            self.tb_process.terminate()
+        self.shutdown_tensorboard()
         super().closeEvent(event)

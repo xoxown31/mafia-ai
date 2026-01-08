@@ -3,6 +3,7 @@ import os
 from typing import Dict, Any, Optional
 import threading
 import torch
+from tqdm import tqdm
 
 from config import Role, config
 from core.managers.stats import StatsManager
@@ -34,15 +35,15 @@ def train(
     # 0번 플레이어 기준으로 몇 개의 게임이 생성되는지 확인
     sample_indices = list(range(0, env.num_envs, PLAYERS_PER_GAME))
     actual_num_games = len(sample_indices)
-
+    
     print(f"=== Start SuperSuit Parallel Training ===")
-    print(f"  - Total Slots (num_envs): {env.num_envs}")
-    print(f"  - Players per Game: {PLAYERS_PER_GAME}")
     print(f"  - Actual Parallel Games: {actual_num_games}")
-    print(f"  - Target Episodes: {args.episodes}")
 
     stats_manager = StatsManager()
     total_episodes = args.episodes
+
+    slot_episode_ids = [i + 1 for i in range(actual_num_games)]
+    next_global_episode_id = actual_num_games + 1
 
     # --- 초기화 ---
     obs, info = env.reset()
@@ -53,7 +54,6 @@ def train(
             agent.reset_hidden(batch_size=actual_num_games)
 
     completed_episodes = 0
-
     current_rewards = {}  # 빈 딕셔너리 생성
 
     # 에이전트마다 자기 할당량을 직접 계산 (len)
@@ -73,7 +73,15 @@ def train(
         # 이렇게 하면 나중에 (9,) 그릇에 (9,) 데이터를 담게 되어 에러가 안 남
         current_rewards[pid] = np.zeros(my_batch_size)
 
-    while completed_episodes < total_episodes:
+    pbar = tqdm(total=total_episodes, desc="Training", unit="ep")
+
+
+    while True:
+        is_target_still_running = any(eid <= total_episodes for eid in slot_episode_ids)
+        
+        if completed_episodes >= total_episodes and not is_target_still_running:
+            break
+
         if stop_event and stop_event.is_set():
             break
 
@@ -123,6 +131,30 @@ def train(
         # --- [2. 환경 진행 (Step)] ---
         next_obs, rewards, terminations, truncations, infos = env.step(all_actions)
 
+        if isinstance(infos, dict):
+            iterator = [(0, item) for item in infos.values()]
+        elif isinstance(infos, list):
+            iterator = enumerate(infos)
+        else:
+            iterator = []
+
+        for flat_idx, info_item in iterator:
+            if isinstance(info_item, dict) and "log_events" in info_item:
+                
+                game_slot_idx = flat_idx // PLAYERS_PER_GAME
+                custom_id = slot_episode_ids[game_slot_idx]
+                
+                if custom_id > total_episodes:
+                    continue
+                
+                for ev_dict in info_item["log_events"]:
+                    try:
+                        from core.engine.state import GameEvent
+                        event_obj = GameEvent(**ev_dict)
+                        logger.log_event(event_obj, custom_episode=custom_id)
+                    except Exception as e:
+                        print(f"[Log Error] {e}")
+
         # --- [3. 보상 저장 및 버퍼 관리] ---
         for pid, agent in rl_agents.items():
             indices = list(range(pid, env.num_envs, PLAYERS_PER_GAME))
@@ -150,6 +182,11 @@ def train(
         num_finished_now = np.sum(dones)
 
         if num_finished_now > 0:
+            finished_slot_indices = np.where(dones)[0]
+            for slot_idx in finished_slot_indices:
+                slot_episode_ids[slot_idx] = next_global_episode_id
+                next_global_episode_id += 1
+            
             completed_episodes += num_finished_now
             finished_indices = np.where(dones)[0]
 
@@ -166,13 +203,13 @@ def train(
             for pid in rl_agents:
                 current_rewards[pid][finished_indices] = 0.0
 
-            print(f"Progress: {completed_episodes}/{total_episodes} episodes.")
+            pbar.update(num_finished_now)
 
             # 업데이트 주기 체크
             if (
                 completed_episodes - num_finished_now
             ) // 100 != completed_episodes // 100:
-                print("[System] Updating Agents...")
+                pbar.write("[System] Updating Agents...")
                 for agent in rl_agents.values():
                     if hasattr(agent, "update"):
                         agent.update()

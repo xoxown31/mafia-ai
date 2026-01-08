@@ -217,14 +217,17 @@ class LogManager:
             if (episode - 1) % self.split_interval == 0:
                 self._open_log_file(episode)
 
-    def log_event(self, event: GameEvent):
+    def log_event(self, event: GameEvent, custom_episode: int = None):
         """GameEvent를 JSONL 형식으로 기록"""
         if self.jsonl_file:
             # 1. 이벤트를 딕셔너리로 변환
             data = event.dict() if hasattr(event, "dict") else event.model_dump()
 
-            # 2. 딕셔너리에 episode 필드 강제 주입
-            data["episode"] = self.current_episode
+            # 2. episode 필드 주입 (들어온 값이 있으면 그걸 쓰고, 없으면 기본값 사용)
+            if custom_episode is not None:
+                data["episode"] = custom_episode
+            else:
+                data["episode"] = self.current_episode
 
             # 3. 파일 쓰기
             self.jsonl_file.write(json.dumps(data, ensure_ascii=False) + "\n")
