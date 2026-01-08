@@ -113,8 +113,13 @@ class MafiaEnv(ParallelEnv):
         prev_phase = self.game.phase
         prev_alive_count = sum(1 for p in self.game.players if p.alive)
 
+        history_start_idx = len(self.game.history)
+
         # 게임 진행
         status, is_over, is_win = self.game.step_phase(engine_actions)
+
+        new_events = self.game.history[history_start_idx:]
+        serialized_events = [e.model_dump() for e in new_events]
 
         # 상태 변화 추적
         self._track_state_changes(prev_phase, prev_alive_count, engine_actions)
@@ -143,7 +148,13 @@ class MafiaEnv(ParallelEnv):
             )
             terminations[agent] = is_over
             truncations[agent] = False
-            infos[agent] = {"day": status.day, "phase": status.phase, "win": my_win}
+            
+            agent_info = {"day": status.day, "phase": status.phase, "win": my_win}
+            
+            if pid == 0:
+                agent_info["log_events"] = serialized_events
+                
+            infos[agent] = agent_info
 
         if is_over:
             self.agents = []
