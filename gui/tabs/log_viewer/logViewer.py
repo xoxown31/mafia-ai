@@ -66,8 +66,8 @@ class LogViewer(QWidget):
 
         subprocess.run(
             ["taskkill", "/F", "/IM", "tensorboard.exe", "/T"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,  # 에러 숨김
+            stdout=subprocess.DEVNULL,  # 성공 메세지 숨김
+            stderr=subprocess.DEVNULL,  # 에러 메세지 숨김
             shell=True,
         )
 
