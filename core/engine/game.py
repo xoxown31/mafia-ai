@@ -408,9 +408,23 @@ class MafiaGame:
         final_mafia_target = night_targets.get(Role.MAFIA)
         doctor_target = night_targets.get(Role.DOCTOR)
 
+        victim_id = -1
+
         if final_mafia_target is not None and final_mafia_target != doctor_target:
             self.players[final_mafia_target].alive = False
+            victim_id = final_mafia_target
 
+        ann_event = GameEvent(
+            day=self.day + 1,
+            phase=Phase.DAY_DISCUSSION,
+            event_type=EventType.KILL,
+            actor_id=-1,
+            target_id=victim_id,
+            value="NIGHT_RESULT",
+        )
+        self.history.append(ann_event)
+        if self.logger:
+            self.logger.log_event(ann_event)
         return True
 
     def get_game_status(self, viewer_id: Optional[int] = None) -> GameStatus:

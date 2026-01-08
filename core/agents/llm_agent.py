@@ -398,10 +398,20 @@ class LLMAgent(BaseAgent):
                 death_summary.append(
                     f"{event.day}일차 낮: Player {event.target_id} 처형됨 (직업: {role_name})"
                 )
-            elif event.event_type == EventType.KILL:
+            elif event.event_type == EventType.KILL and event.phase == Phase.NIGHT:
                 death_summary.append(
                     f"{event.day}일차 밤: Player {event.target_id} 살해당함"
                 )
+            elif (
+                event.event_type == EventType.KILL
+                and event.phase == Phase.DAY_DISCUSSION
+            ):
+                if event.target_id != -1:
+                    death_summary.append(
+                        f"{event.day}일차 아침: 지난 밤 Player {event.target_id} 사망"
+                    )
+                else:
+                    death_summary.append(f"{event.day}일차 아침: 지난 밤 사망자 없음")
 
         if death_summary:
             summary_lines.append("\n* 사망자 정보:")
