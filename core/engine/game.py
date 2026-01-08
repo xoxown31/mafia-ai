@@ -177,7 +177,7 @@ class MafiaGame:
             if self.logger:
                 self.logger.log_event(event)
 
-        # 토론 종료 조건 확인 (HEAD의 효율적 조건 사용)
+        # 토론 종료 조건 확인
         if pass_count >= alive_count * 0.5:
             return True
 
