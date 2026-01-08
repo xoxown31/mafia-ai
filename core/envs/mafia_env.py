@@ -485,6 +485,18 @@ class MafiaEnv(ParallelEnv):
             return np.concatenate([_target_mask, _role_mask])
 
         _target_mask[0] = 1
+        phase = status.phase
+        is_active_night_role = phase == Phase.NIGHT and agent.role in [
+            Role.MAFIA,
+            Role.POLICE,
+            Role.DOCTOR,
+        ]
+
+        if is_active_night_role:
+            _target_mask[0] = 0
+        else:
+            _target_mask[0] = 1
+
         _role_mask[0] = 1
 
         valid_targets = {p.id for p in self.game.players if p.alive}
@@ -498,6 +510,8 @@ class MafiaEnv(ParallelEnv):
                 valid_targets -= mafia_team_ids
             elif agent.role == Role.POLICE:
                 valid_targets.discard(agent_id)
+            elif agent.role == Role.CITIZEN:
+                valid_targets.clear()
 
         elif phase == Phase.DAY_VOTE:
             valid_targets.discard(agent_id)
