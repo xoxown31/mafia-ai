@@ -57,7 +57,6 @@ class LogManager:
             self.session_dir = self.log_dir / f"{experiment_name}_{timestamp}"
             self.session_dir.mkdir(parents=True, exist_ok=True)
 
-            # [수정] 초기 파일 열기 (1번 에피소드부터 시작)
             self._open_log_file(1)
 
             self.writer = None
@@ -76,18 +75,105 @@ class LogManager:
         """[추가] 새로운 로그 파일을 엽니다."""
         if not self.write_mode:
             return
-
-        # 기존 파일이 열려있다면 닫기
         if self.jsonl_file and not self.jsonl_file.closed:
             self.jsonl_file.flush()
             self.jsonl_file.close()
-
         # 파일명 형식: events_ep{시작에피소드}.jsonl
         # 예: events_ep1.jsonl, events_ep1001.jsonl
         filename = f"events_ep{start_episode}.jsonl"
         self.jsonl_path = self.session_dir / filename
         self.jsonl_file = open(self.jsonl_path, "w", encoding="utf-8")
         print(f"[LogManager] Created new log file: {filename}")
+
+    def _setup_tensorboard_layout(self):
+        """TensorBoard Custom Scalars 레이아웃 설정"""
+        if not self.writer:
+            return
+
+        # Individual Agent Charts (Separate charts per agent)
+        individual_charts = {}
+        for i in range(config.game.PLAYER_COUNT):
+            individual_charts[f"Agent {i} Reward"] = [
+                "Multiline",
+                [f"Agent_{i}/Reward_Total"],
+            ]
+
+        layout = {
+            "Summary Dashboard": {
+                "Win Rates": [
+                    "Multiline",
+                    ["Game/Mafia_WinRate", "Game/Citizen_WinRate"],
+                ],
+                "Team Avg Reward": [
+                    "Multiline",
+                    ["Reward/Mafia_Avg", "Reward/Citizen_Avg"],
+                ],
+                "Total Reward": ["Multiline", ["Reward/Total"]],
+                "Game Duration": [
+                    "Multiline",
+                    [
+                        "Game/Duration",
+                        "Game/Avg_Day_When_Mafia_Wins",
+                        "Game/Avg_Day_When_Citizen_Wins",
+                    ],
+                ],
+            },
+            "Training Details": {
+                "Team Loss": ["Multiline", ["Train/Mafia_Loss", "Train/Citizen_Loss"]],
+                "Team Entropy": [
+                    "Multiline",
+                    ["Train/Mafia_Entropy", "Train/Citizen_Entropy"],
+                ],
+                "Policy Trust (KL)": [
+                    "Multiline",
+                    ["Train/Mafia_ApproxKL", "Train/Citizen_ApproxKL"],
+                ],
+                "Clip Fraction": [
+                    "Multiline",
+                    ["Train/Mafia_ClipFrac", "Train/Citizen_ClipFrac"],
+                ],
+            },
+            "Individual Agents": individual_charts,
+            "Role Performance": {
+                "Doctor Stats": [
+                    "Multiline",
+                    ["Action/Doctor_Save_Rate", "Action/Doctor_Self_Heal_Rate"],
+                ],
+                "Police Stats": ["Multiline", ["Action/Police_Find_Rate"]],
+                "Mafia Stats": ["Multiline", ["Action/Mafia_Kill_Success_Rate"]],
+                "Citizen Survival": ["Multiline", ["Game/Citizen_Survival_Rate"]],
+            },
+            "Behavior Analysis": {
+                "Voting Behavior": [
+                    "Multiline",
+                    ["Vote/Abstain_Rate", "Game/Execution_Frequency"],
+                ],
+                "Voting Accuracy": [
+                    "Multiline",
+                    ["Vote/Citizen_Accuracy_Rate", "Vote/Mafia_Betrayal_Rate"],
+                ],
+                "Execution Outcomes": [
+                    "Multiline",
+                    ["Vote/Mafia_Lynch_Rate", "Vote/Citizen_Sacrifice_Rate"],
+                ],
+            },
+        }
+
+        self.writer.add_custom_scalars(layout)
+
+    def log_histograms(self, episode: int, agent_id: int, tag: str, values: Any):
+        """
+        히스토그램 로깅
+        Args:
+            episode: 현재 에피소드
+            agent_id: 에이전트 ID
+            tag: 데이터 태그 (예: 'Action/Probs')
+            values: 데이터 값 (Tensor or Numpy array)
+        """
+        if self.writer:
+            self.writer.add_histogram(
+                f"Agent_{agent_id}/{tag}", values, global_step=episode
+            )
 
     def _load_narrative_templates(self) -> Dict[str, str]:
         """YAML에서 내러티브 템플릿 로드"""
