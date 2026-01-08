@@ -191,6 +191,8 @@ class LogManager:
             "KILL": "Night {day} | Player {target_id}가 마피아에게 살해당했습니다.",
             "PROTECT": "Night {day} | 의사가 Player {target_id}를 보호했습니다.",
             "POLICE_RESULT": "Night {day} | 경찰이 Player {target_id}를 조사: {role_name}",
+            "NIGHT_RESULT": "Day {day} | 지난 밤 Player {target_id}가 사망했습니다.",
+            "NIGHT_RESULT_NONE": "Day {day} | 지난 밤 아무도 사망하지 않았습니다.",
             "SILENCE": "Day {day} | Player {actor_id}가 침묵했습니다.",
         }
 
@@ -271,7 +273,6 @@ class LogManager:
 
         # 1. 이벤트 타입과 템플릿 키 매핑
         type_to_key = {
-            EventType.SYSTEM_MESSAGE: "SYSTEM_MESSAGE",
             EventType.KILL: "KILL",
             EventType.PROTECT: "PROTECT",
             EventType.POLICE_RESULT: "POLICE_RESULT",
@@ -279,6 +280,15 @@ class LogManager:
 
         # 2. 특수 로직이 필요한 CLAIM 처리
         template_key = type_to_key.get(event.event_type)
+
+        if event.event_type == EventType.SYSTEM_MESSAGE:
+            if event.value == None:
+                if event.target_id == -1:
+                    template_key = "NIGHT_RESULT_NONE"
+                else:
+                    template_key = "NIGHT_RESULT"
+            else:
+                template_key = "SYSTEM_MESSAGE"
 
         if event.event_type == EventType.CLAIM:
             if event.value is None:

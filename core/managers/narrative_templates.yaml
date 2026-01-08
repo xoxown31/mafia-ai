@@ -11,4 +11,6 @@ CANCEL: "Day {day} | 투표가 무산되어 아무도 처형되지 않았습니�
 KILL: "Night {day} | Player {target_id}가 마피아에게 살해당했습니다."
 PROTECT: "Night {day} | 의사가 Player {target_id}를 보호했습니다."
 POLICE_RESULT: "Night {day} | 경찰이 Player {target_id}를 조사한 결과: {role_name}"
+"NIGHT_RESULT": "Day {day} | 지난 밤 Player {target_id}가 사망했습니다."
+"NIGHT_RESULT_NONE": "Day {day} | 지난 밤 아무도 사망하지 않았습니다."
 SILENCE: "Day {day} | Player {actor_id}가 침묵했습니다."

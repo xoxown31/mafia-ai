@@ -178,6 +178,11 @@ class LLMAgent(BaseAgent):
         """
         LLM의 JSON 응답을 MafiaAction으로 변환하여 반환
         """
+        alive_status = next((p for p in status.players if p.id == self.id), None)
+        if alive_status and not alive_status.alive:
+            return GameAction(
+                action_type=ActionType.PASS, target_id=-1, claim_role=None
+            )
         self.role = status.my_role
 
         phase_name = status.phase.name
@@ -195,6 +200,10 @@ class LLMAgent(BaseAgent):
         # 처형 단계에서는 GameAction으로 변환하지 않고, dict를 그대로 반환
         if status.phase == Phase.DAY_EXECUTE:
             return action_dict
+
+        raw_target = action_dict.get("target_id")
+        if isinstance(raw_target, str) and raw_target.isdigit():
+            action_dict["target_id"] = int(raw_target)
 
         # --- [수정된 부분] 액션 유효성 검증 및 보정 ---
         if status.phase in [Phase.NIGHT, Phase.DAY_VOTE]:
@@ -398,10 +407,20 @@ class LLMAgent(BaseAgent):
                 death_summary.append(
                     f"{event.day}일차 낮: Player {event.target_id} 처형됨 (직업: {role_name})"
                 )
-            elif event.event_type == EventType.KILL:
+            elif event.event_type == EventType.KILL and event.phase == Phase.NIGHT:
                 death_summary.append(
                     f"{event.day}일차 밤: Player {event.target_id} 살해당함"
                 )
+            elif (
+                event.event_type == EventType.SYSTEM_MESSAGE
+                and event.phase == Phase.DAY_DISCUSSION
+            ):
+                if event.target_id != -1:
+                    death_summary.append(
+                        f"{event.day}일차 아침: 지난 밤 Player {event.target_id} 사망"
+                    )
+                else:
+                    death_summary.append(f"{event.day}일차 아침: 지난 밤 사망자 없음")
 
         if death_summary:
             summary_lines.append("\n* 사망자 정보:")

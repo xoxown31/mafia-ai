@@ -43,18 +43,18 @@ class MafiaGame:
             p.role = r
             p.vote_count = 0  # 투표 수 초기화
             p.alive = True
-            # 역할 할당 이벤트 로깅
-            if self.logger:
-                # GameEvent로 기록 (JSONL 저장용)
+            # GameEvent로 기록 (JSONL 저장용)
 
-                event = GameEvent(
-                    day=0,
-                    phase=Phase.GAME_START,
-                    event_type=EventType.SYSTEM_MESSAGE,  # 역할 공개 이벤트로 활용
-                    actor_id=-1,
-                    target_id=p.id,
-                    value=p.role,
-                )
+            event = GameEvent(
+                day=0,
+                phase=Phase.GAME_START,
+                event_type=EventType.SYSTEM_MESSAGE,  # 역할 공개 이벤트로 활용
+                actor_id=-1,
+                target_id=p.id,
+                value=p.role,
+            )
+            self.history.append(event)
+            if self.logger:
                 self.logger.log_event(event)
 
         return self.get_game_status()
@@ -408,9 +408,23 @@ class MafiaGame:
         final_mafia_target = night_targets.get(Role.MAFIA)
         doctor_target = night_targets.get(Role.DOCTOR)
 
+        victim_id = -1
+
         if final_mafia_target is not None and final_mafia_target != doctor_target:
             self.players[final_mafia_target].alive = False
+            victim_id = final_mafia_target
 
+        ann_event = GameEvent(
+            day=self.day + 1,
+            phase=Phase.DAY_DISCUSSION,
+            event_type=EventType.SYSTEM_MESSAGE,
+            actor_id=-1,
+            target_id=victim_id,
+            value=None,
+        )
+        self.history.append(ann_event)
+        if self.logger:
+            self.logger.log_event(ann_event)
         return True
 
     def get_game_status(self, viewer_id: Optional[int] = None) -> GameStatus:
@@ -441,6 +455,10 @@ class MafiaGame:
                     )
 
         for e in self.history:
+            if e.phase == Phase.GAME_START and e.event_type == EventType.SYSTEM_MESSAGE:
+                if e.target_id == viewer_id:
+                    filtered.append(e)
+                continue
             if e.phase == Phase.NIGHT:
                 if (
                     e.actor_id == viewer_id
