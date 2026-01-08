@@ -3,6 +3,7 @@ import os
 from typing import Dict, Any, Optional
 import threading
 import torch
+from tqdm import tqdm
 
 from config import Role, config
 from core.managers.stats import StatsManager
@@ -71,6 +72,9 @@ def train(
         # 2. 보상 버퍼 초기화 (내 실제 크기에 맞춤)
         # 이렇게 하면 나중에 (9,) 그릇에 (9,) 데이터를 담게 되어 에러가 안 남
         current_rewards[pid] = np.zeros(my_batch_size)
+
+    pbar = tqdm(total=total_episodes, desc="Training", unit="ep")
+
 
     while True:
         is_target_still_running = any(eid <= total_episodes for eid in slot_episode_ids)
@@ -199,13 +203,13 @@ def train(
             for pid in rl_agents:
                 current_rewards[pid][finished_indices] = 0.0
 
-            print(f"Progress: {completed_episodes}/{total_episodes} episodes.")
+            pbar.update(num_finished_now)
 
             # 업데이트 주기 체크
             if (
                 completed_episodes - num_finished_now
             ) // 100 != completed_episodes // 100:
-                print("[System] Updating Agents...")
+                pbar.write("[System] Updating Agents...")
                 for agent in rl_agents.values():
                     if hasattr(agent, "update"):
                         agent.update()
