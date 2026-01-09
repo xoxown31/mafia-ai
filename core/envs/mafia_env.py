@@ -71,9 +71,15 @@ class MafiaEnv(ParallelEnv):
         self.attack_was_blocked = False
 
     def reset(self, seed=None, options=None):
-        # PettingZoo API: reset returns (observations, infos)
+        """
+        Resets the environment and captures initial game events (Day 0) for external logging.
+        """
         self.agents = self.possible_agents[:]
         self.game.reset()
+
+        # [NEW] Capture initial events (Game Start, Role Assignments)
+        # self.game.history contains events generated during game.reset()
+        initial_events = [e.model_dump() for e in self.game.history]
 
         # 상태 초기화
         self.last_executed_player = None
@@ -91,6 +97,10 @@ class MafiaEnv(ParallelEnv):
             }
 
         infos = {agent: {} for agent in self.agents}
+        
+        # [NEW] Attach initial logs to the first agent's info so Runner can access them
+        if self.agents:
+            infos[self.agents[0]]["log_events"] = initial_events
 
         return observations, infos
 

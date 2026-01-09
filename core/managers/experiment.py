@@ -47,8 +47,12 @@ class ExperimentManager:
         )
 
     def build_env(self) -> MafiaEnv:
-        """메인 프로세스용 환경 (여기엔 로거가 있음)"""
-        return MafiaEnv(logger=self.logger)
+        """
+        메인 프로세스용 환경
+        [수정] Runner가 로그를 중앙 관리하므로, Env 내부에는 logger를 주지 않습니다.
+        """
+        # 기존: return MafiaEnv(logger=self.logger)
+        return MafiaEnv(logger=None)
 
     def build_vec_env(self, num_envs: int = 8, num_cpus: int = 4):
         """

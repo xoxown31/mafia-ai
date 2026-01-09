@@ -234,14 +234,13 @@ def test(
     stop_event: Optional[threading.Event] = None
 ):
     """
-    [데이터 수집 겸용 테스트]
-    - 단일 환경(Single Env)에서 순차적으로 실행됩니다.
-    - logger가 있으면 자동으로 학습 데이터(train_set.jsonl)를 수집합니다.
+    Runner centrally controls logging. 
+    It extracts 'log_events' from env.infos and logs them via the provided logger.
     """
     num_episodes = args.episodes
     print(f"=== Start Data Collection / Test (Target: {num_episodes} eps) ===")
 
-    # 1. DataManager 연결
+    # Setup Data Manager
     data_manager = None
     if logger and logger.session_dir:
         data_manager = ExpertDataManager(save_dir=logger.session_dir)
@@ -249,13 +248,28 @@ def test(
     else:
         print("  - [Data Collection OFF] No logger provided.")
 
+    # [NEW] Helper function to process logs from infos
+    def process_logs(info_dict):
+        if not logger or not info_dict: return
+        for _, info_item in info_dict.items():
+            if isinstance(info_item, dict) and "log_events" in info_item:
+                for ev_dict in info_item["log_events"]:
+                    try:
+                        from core.engine.state import GameEvent
+                        logger.log_event(GameEvent(**ev_dict))
+                    except Exception: pass
+                break # Process only once per turn
+
     completed_episodes = 0
-    obs, info = env.reset()
     
-    # 통계용
+    # [NEW] Initial Reset & Log (Captures Day 0 / Role assignments)
+    obs, infos = env.reset()
+    process_logs(infos)
+    
+    # Stats
     win_counts = {Role.CITIZEN: 0, Role.MAFIA: 0}
 
-    # [수정] tqdm으로 전체 에피소드 루프 감싸기
+    # tqdm으로 전체 에피소드 루프
     pbar = tqdm(total=num_episodes, desc="Collecting Data", unit="ep")
 
     while completed_episodes < num_episodes:
@@ -263,78 +277,45 @@ def test(
 
         # --- [1. 행동 결정] ---
         actions = {}
-        
-        # [수정] 살아있는 플레이어 확인 루프 개선
-        # env.agents는 현재 살아있는 에이전트의 ID 문자열 리스트(예: ["player_0", "player_2"])를 반환함
         for agent_id_str in env.agents:
-            p_id = int(agent_id_str.split("_")[1]) # "player_0" -> 0
-            
-            # [수정] Observation Key 접근 수정 (문자열 키 사용)
-            # obs[agent_id_str]는 {'observation': ..., 'action_mask': ...} 형태임
+            p_id = int(agent_id_str.split("_")[1])
             full_obs = obs[agent_id_str]
-            
-            # [수정] 순수 Observation 벡터만 추출 (Data Collection용)
             obs_vec = full_obs['observation']
-
             agent = all_agents[p_id]
             
-            # 행동 결정 (호환성 처리)
             action_obj = None
-            # Default Action Vector: [Target=0(None), Role=0(None)]
-            # state.py의 GameAction.to_multi_discrete() 로직과 일치시킴
             action_vector = [0, 0] 
 
             try:
-                # 1. LLM / Rule / Heuristic (GameStatus 필요)
+                # LLM / Rule / Heuristic
                 if hasattr(agent, "get_action"):
-                    # 단일 환경이므로 get_game_status 호출 안전
                     game_status = env.get_game_status(p_id)
                     action_obj = agent.get_action(game_status)
-                    
-                    # GameAction 객체를 벡터로 변환 (state.py 로직 활용)
                     action_vector = action_obj.to_multi_discrete()
-                    actions[p_id] = action_obj # Env에는 객체 전달
+                    actions[p_id] = action_obj 
 
-                # 2. RL Agent (Vector Obs 필요)
+                # RL Agent
                 elif hasattr(agent, "select_action_vector"):
-                    # RL Agent는 dict obs를 받을 수 있도록 설계됨
                     action_vector = agent.select_action_vector(full_obs)
                     actions[p_id] = action_vector 
 
-                # --- [핵심] 데이터 저장 ---
+                # 데이터 수집 (Runner 주도)
                 if data_manager:
-                    # 현재 에피소드 ID (1부터 시작)
                     current_ep_id = completed_episodes + 1
-                    # [수정] action_mask도 함께 전달
                     action_mask = full_obs.get('action_mask')
                     data_manager.record_turn(current_ep_id, p_id, obs_vec, action_vector, action_mask=action_mask)
 
             except Exception as e:
-                # [수정] tqdm 깨짐 방지: pbar.write 사용
-                # pbar.write(f"[Error] Agent {p_id}: {e}")
+                # 에러 발생 시 건너뜀 (데이터 오염 방지)
                 pass
 
         # --- [2. 환경 진행] ---
-        # Env step expects string keys matching agents
         env_actions = {f"player_{pid}": act for pid, act in actions.items()}
         next_obs, rewards, terminations, truncations, infos = env.step(env_actions)
-
-        # PettingZoo API update: done check
         done = not env.agents
 
-        # --- [3. 로그 저장] ---
-        if logger:
-             # step의 infos에서 log_events 추출 시도
-             # infos는 dict {agent_id: info_dict}
-             # 보통 0번 에이전트 정보에 전체 로그가 포함됨
-             for agent_id_str, info_item in infos.items():
-                 if isinstance(info_item, dict) and "log_events" in info_item:
-                     for ev_dict in info_item["log_events"]:
-                         try:
-                            from core.engine.state import GameEvent
-                            logger.log_event(GameEvent(**ev_dict))
-                         except: pass
-                     break 
+        # --- [3. 로그 저장 (Runner 중앙 관리)] ---
+        process_logs(infos) # [NEW] Log events occurring during step
 
         obs = next_obs
 
@@ -342,33 +323,33 @@ def test(
         if done:
             completed_episodes += 1
             
-            # 결과 기록
             winner = env.game.winner
             if winner:
                 win_counts[winner] += 1
             
-            # 데이터 파일 쓰기 (Flush)
+            # 데이터 파일 저장 (Flush)
             if data_manager:
-                # env.game.players를 넘겨주어 역할 확인 가능하게 함
                 data_manager.flush_episode(
                     completed_episodes, 
                     winner_role=winner, 
                     players=env.game.players
                 )
             
-            # 로그 매니저에게 에피소드 종료 알림 (통계 등)
+            # 로그 메트릭 기록
             if logger:
-                # 간단히 승리 여부만 기록
                 is_win = (winner == Role.MAFIA) 
                 logger.log_metrics(completed_episodes, total_reward=0, is_win=is_win)
-                logger.set_episode(completed_episodes + 1) # 다음 에피소드 번호 세팅
+                # 다음 에피소드 번호 세팅 (중요: Day 0 로그가 섞이지 않게 함)
+                logger.set_episode(completed_episodes + 1)
 
             pbar.update(1)
-            # [수정] 진행 바 정보 업데이트
             win_rate = (win_counts[Role.MAFIA] / completed_episodes) * 100 if completed_episodes > 0 else 0.0
             pbar.set_postfix(mafia_win_rate=f"{win_rate:.1f}%")
             
-            obs, _ = env.reset()
+            # [중요] 목표를 아직 못 채웠을 때만 리셋 (불필요한 Day 0 로그 방지)
+            if completed_episodes < num_episodes:
+                obs, infos = env.reset()
+                process_logs(infos) # <-- Capture new episode's start logs
 
     pbar.close()
     print(f"\n=== Test/Collection Finished ===")
