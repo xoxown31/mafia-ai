@@ -255,7 +255,8 @@ def test(
     # 통계용
     win_counts = {Role.CITIZEN: 0, Role.MAFIA: 0}
 
-    pbar = tqdm(total=num_episodes, desc="Collecting", unit="ep")
+    # [수정] tqdm으로 전체 에피소드 루프 감싸기
+    pbar = tqdm(total=num_episodes, desc="Collecting Data", unit="ep")
 
     while completed_episodes < num_episodes:
         if stop_event and stop_event.is_set(): break
@@ -309,7 +310,9 @@ def test(
                     data_manager.record_turn(current_ep_id, p_id, obs_vec, action_vector, action_mask=action_mask)
 
             except Exception as e:
-                print(f"[Error] Agent {p_id}: {e}")
+                # [수정] tqdm 깨짐 방지: pbar.write 사용
+                # pbar.write(f"[Error] Agent {p_id}: {e}")
+                pass
 
         # --- [2. 환경 진행] ---
         # Env step expects string keys matching agents
@@ -337,25 +340,31 @@ def test(
 
         # --- [4. 종료 체크] ---
         if done:
+            completed_episodes += 1
+            
             # 결과 기록
             if env.game.winner:
                 win_counts[env.game.winner] += 1
             
             # 데이터 파일 쓰기 (Flush)
             if data_manager:
-                data_manager.flush_episode(completed_episodes + 1)
+                data_manager.flush_episode(completed_episodes)
             
             # 로그 매니저에게 에피소드 종료 알림 (통계 등)
             if logger:
                 # 간단히 승리 여부만 기록
                 is_win = (env.game.winner == Role.MAFIA) 
-                logger.log_metrics(completed_episodes + 1, total_reward=0, is_win=is_win)
-                logger.set_episode(completed_episodes + 2) # 다음 에피소드 번호 세팅
+                logger.log_metrics(completed_episodes, total_reward=0, is_win=is_win)
+                logger.set_episode(completed_episodes + 1) # 다음 에피소드 번호 세팅
 
-            completed_episodes += 1
             pbar.update(1)
+            # [수정] 진행 바 정보 업데이트
+            win_rate = (win_counts[Role.MAFIA] / completed_episodes) * 100 if completed_episodes > 0 else 0.0
+            pbar.set_postfix(mafia_win_rate=f"{win_rate:.1f}%")
+            
             obs, _ = env.reset()
 
+    pbar.close()
     print(f"\n=== Test/Collection Finished ===")
     print(f"Results: {win_counts}")
     if data_manager:
