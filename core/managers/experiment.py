@@ -29,7 +29,13 @@ class ExperimentManager:
         self.args = args
         self.player_configs = getattr(args, "player_configs", [])
         self.mode = args.mode
-        self.log_queue = multiprocessing.Manager().Queue()
+        
+        # [Log Queue & ID Counter]
+        manager = multiprocessing.Manager()
+        self.log_queue = manager.Queue()
+        self.id_counter = manager.Value('i', 0)
+        self.id_lock = manager.Lock()
+        
         self.logger = self._setup_logger()
 
     def _setup_logger(self) -> LogManager:
@@ -62,24 +68,28 @@ class ExperimentManager:
         """
         print(f"[System] Building Parallel Env: {num_envs} games with {num_cpus} CPUs")
 
-        # 각 환경에 고유 worker_id와 log_queue를 주입하여 생성
-        env_list = []
-        for i in range(num_envs):
-            env = MafiaEnv(worker_id=i, log_queue=self.log_queue)
-            env = ss.pettingzoo_env_to_vec_env_v1(env)
-            env_list.append(env)
+        # 1. 단일 환경 템플릿 생성 (여기에 shared counter & lock 주입)
+        # 중요: log_queue, id_counter, id_lock을 주입해 프로세스 복제 시 공유되도록 함
+        env = MafiaEnv(
+            worker_id=None,  # None means "autoget via counter"
+            log_queue=self.log_queue,
+            id_counter=self.id_counter,
+            id_lock=self.id_lock
+        )
 
-        # 3. 병렬 연결
+        # 2. PettingZoo -> Gymnasium 변환
+        env = ss.pettingzoo_env_to_vec_env_v1(env)
+
+        # 3. 병렬 연결 (단일 템플릿 전달)
         try:
             vec_env = ss.concat_vec_envs_v1(
-                env_list, num_vec_envs=num_envs, num_cpus=num_cpus, base_class="gymnasium"
+                env, num_vec_envs=num_envs, num_cpus=num_cpus, base_class="gymnasium"
             )
         except Exception as e:
-            # 혹시라도 또 에러가 나면 안전하게 싱글 프로세스로 전환
             print(f"[Error] Parallel creation failed: {e}")
             print("[System] Switching to single process mode (Safe Mode)")
             vec_env = ss.concat_vec_envs_v1(
-                env_list, num_vec_envs=num_envs, num_cpus=0, base_class="gymnasium"
+                env, num_vec_envs=num_envs, num_cpus=0, base_class="gymnasium"
             )
 
         return vec_env

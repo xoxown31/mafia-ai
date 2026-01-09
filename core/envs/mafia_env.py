@@ -26,12 +26,23 @@ class EnvAgent(BaseAgent):
 class MafiaEnv(ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "mafia_v1"}
 
-    def __init__(self, render_mode=None, worker_id: int = 0, log_queue=None):
+    def __init__(
+        self, 
+        render_mode=None, 
+        worker_id: Optional[int] = None, 
+        log_queue=None,
+        id_counter=None,
+        id_lock=None
+    ):
         self.possible_agents = [f"player_{i}" for i in range(config.game.PLAYER_COUNT)]
         self.agents = self.possible_agents[:]
         self.render_mode = render_mode
-        self.worker_id = worker_id
+        
+        # [ID Management]
+        self._worker_id = worker_id  # If provided explicitly, use it
         self.log_queue = log_queue
+        self.id_counter = id_counter
+        self.id_lock = id_lock
 
         # Create dummy agents for the engine
         # MafiaGame expects a list of BaseAgent instances
@@ -70,6 +81,26 @@ class MafiaEnv(ParallelEnv):
         self.last_investigated_player = None
         self.last_protected_player = None
         self.attack_was_blocked = False
+
+    @property
+    def worker_id(self):
+        """
+        Multiprocessing safe lazy-ID loading.
+        If initial ID was None, acquire a unique ID from the shared counter.
+        This ensures cloned environments in subprocesses get unique IDs.
+        """
+        if self._worker_id is None:
+            if self.id_counter is not None and self.id_lock is not None:
+                try:
+                    with self.id_lock:
+                        self._worker_id = self.id_counter.value
+                        self.id_counter.value += 1
+                except Exception:
+                    # Fallback if lock fails (e.g. not in multiprocessing context properly)
+                    self._worker_id = 0
+            else:
+                self._worker_id = 0
+        return self._worker_id
 
     def _send_log(self, events):
         """Helper to send logs through the multiprocessing queue."""
