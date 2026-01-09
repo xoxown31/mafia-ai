@@ -41,7 +41,6 @@ def run_simulation(args):
                 args, 
                 experiment.logger, 
                 stop_event=STOP, 
-                log_queue=experiment.log_queue
             )
 
         elif args.mode == "test":

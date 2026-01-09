@@ -27,11 +27,10 @@ class EnvAgent(BaseAgent):
 class MafiaEnv(ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "mafia_v1"}
 
-    def __init__(self, render_mode=None, worker_id: int = 0, log_queue=None):
+    def __init__(self, render_mode=None):
         self.possible_agents = [f"player_{i}" for i in range(config.game.PLAYER_COUNT)]
         self.agents = self.possible_agents[:]
         self.render_mode = render_mode
-        self.log_queue = log_queue
 
         # Create dummy agents for the engine
         # MafiaGame expects a list of BaseAgent instances
@@ -71,25 +70,14 @@ class MafiaEnv(ParallelEnv):
         self.last_protected_player = None
         self.attack_was_blocked = False
 
-    def _send_log(self, events):
-        """Helper to send logs through the multiprocessing queue."""
-        if self.log_queue is not None and events:
-            try:
-                # Use process ID as worker identifier
-                self.log_queue.put((os.getpid(), events))
-            except Exception:
-                pass
-
     def reset(self, seed=None, options=None):
         """
-        Resets the environment and captures initial game events (Day 0) for external logging.
+        Resets the environment.
         """
         self.agents = self.possible_agents[:]
         self.game.reset()
 
-        # Capture initial logs using persistent index
-        self.last_history_idx = 0
-        new_events = [e.model_dump() for e in self.game.history[self.last_history_idx:]]
+        # [REMOVED] event dumping logic for speed optimization
         self.last_history_idx = len(self.game.history)
 
         # 상태 초기화
@@ -109,10 +97,6 @@ class MafiaEnv(ParallelEnv):
 
         infos = {agent: {} for agent in self.agents}
         
-        # [MODIFIED] Send logs to queue instead of info
-        if new_events:
-            self._send_log(new_events)
-
         return observations, infos
 
     def step(self, actions):
@@ -137,8 +121,7 @@ class MafiaEnv(ParallelEnv):
         # 게임 진행
         status, is_over, is_win = self.game.step_phase(engine_actions)
 
-        # Capture new logs
-        new_events = [e.model_dump() for e in self.game.history[self.last_history_idx:]]
+        # [REMOVED] event dumping logic for speed optimization
         self.last_history_idx = len(self.game.history)
 
         # 상태 변화 추적
@@ -172,10 +155,6 @@ class MafiaEnv(ParallelEnv):
             agent_info = {"day": status.day, "phase": status.phase, "win": my_win}
             infos[agent] = agent_info
         
-        # [MODIFIED] Send logs to queue
-        if new_events:
-            self._send_log(new_events)
-
         if is_over:
             self.agents = []
 

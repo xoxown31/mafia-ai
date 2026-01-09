@@ -18,7 +18,6 @@ def train(
     args,
     logger: "LogManager",
     stop_event: Optional[threading.Event] = None,
-    log_queue=None,
 ):
     """
     [수정됨] SuperSuit VectorEnv 전용 병렬 학습 루프
@@ -133,40 +132,8 @@ def train(
         # --- [2. 환경 진행 (Step)] ---
         next_obs, rewards, terminations, truncations, infos = env.step(all_actions)
 
-        # [MODIFIED] Queue 기반 로그 처리
-        # 기존 infos 순회 로직 제거
-        if log_queue:
-            while not log_queue.empty():
-                try:
-                    # 데이터 꺼내기 (pid, event_list)
-                    pid, ev_list = log_queue.get_nowait()
-                    
-                    # [FILTER] 첫 번째로 마주친 PID를 녹화 대상으로 지정
-                    if recorder_pid is None:
-                        recorder_pid = pid
-                    
-                    # 녹화 대상이 아니면 스킵
-                    if pid != recorder_pid:
-                        continue
-
-                    # [LOGGING] 대표 프로세스의 이벤트만 기록
-                    # 0번 슬롯의 에피소드 ID를 사용 (대표성을 띔)
-                    custom_id = slot_episode_ids[0]
-                    
-                    if custom_id > total_episodes:
-                        continue
-                    
-                    from core.engine.state import GameEvent
-                    for ev_dict in ev_list:
-                        try:
-                            event_obj = GameEvent(**ev_dict)
-                            logger.log_event(event_obj, custom_episode=custom_id)
-                        except Exception as e:
-                            print(f"[Log Error] {e}")
-
-                except Exception:
-                    # Queue Empty or Manager Error
-                    break
+        # [REMOVED] 학습 속도 향상을 위해 텍스트 로그 처리 로직 제거
+        # 오직 통계와 텐서보드 메트릭만 남김
 
         # --- [3. 보상 저장 및 버퍼 관리] ---
         for pid, agent in rl_agents.items():

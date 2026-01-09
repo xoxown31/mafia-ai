@@ -29,13 +29,6 @@ class ExperimentManager:
         self.args = args
         self.player_configs = getattr(args, "player_configs", [])
         self.mode = args.mode
-        
-        # [Log Queue & ID Counter]
-        manager = multiprocessing.Manager()
-        self.log_queue = manager.Queue()
-        self.id_counter = manager.Value('i', 0)
-        self.id_lock = manager.Lock()
-        
         self.logger = self._setup_logger()
 
     def _setup_logger(self) -> LogManager:
@@ -58,9 +51,8 @@ class ExperimentManager:
         """
         메인 프로세스용 환경
         [수정] Runner가 로그를 중앙 관리하므로, Env 내부에는 logger를 주지 않습니다.
-        대신 log_queue를 주입해 로그 이벤트를 수집합니다.
         """
-        return MafiaEnv(worker_id=0, log_queue=self.log_queue)
+        return MafiaEnv()
 
     def build_vec_env(self, num_envs: int = 8, num_cpus: int = 4):
         """
@@ -70,7 +62,7 @@ class ExperimentManager:
 
         # 1. 단일 환경 템플릿 생성
         # [수정] 리스트 대신 단일 인스턴스를 사용해 에러 해결
-        env = MafiaEnv(log_queue=self.log_queue)
+        env = MafiaEnv()
 
         # 2. PettingZoo -> Gymnasium 변환
         env = ss.pettingzoo_env_to_vec_env_v1(env)
