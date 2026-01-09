@@ -10,18 +10,16 @@ from collections import Counter
 
 
 class MafiaGame:
-    def __init__(self, agents: List[BaseAgent], logger=None):
+    def __init__(self, agents: List[BaseAgent]):
         """
         Args:
             agents: 외부에서 주입받을 에이전트 리스트 (필수)
-            logger: LogManager 인스턴스 (선택적)
         """
         self.players: List[BaseAgent] = agents
         self.day = 1
         self.phase = Phase.DAY_DISCUSSION
         self.discussion_round = 0
         self.history: List[GameEvent] = []
-        self.logger = logger
 
     def reset(self) -> GameStatus:
         """
@@ -54,8 +52,6 @@ class MafiaGame:
                 value=p.role,
             )
             self.history.append(event)
-            if self.logger:
-                self.logger.log_event(event)
 
         return self.get_game_status()
 
@@ -81,8 +77,6 @@ class MafiaGame:
                     value=is_win,  # 시민 승리 여부
                 )
                 self.history.append(event)
-                if self.logger:
-                    self.logger.log_event(event)
             return self.get_game_status(), is_over, is_win
 
         if self.phase == Phase.GAME_START:
@@ -115,8 +109,6 @@ class MafiaGame:
                     value=is_win,  # 시민 승리 여부
                 )
                 self.history.append(event)
-                if self.logger:
-                    self.logger.log_event(event)
 
         return self.get_game_status(), is_over, is_win
 
@@ -174,8 +166,6 @@ class MafiaGame:
 
             # 생성된 이벤트를 히스토리에 추가 및 로깅
             self.history.append(event)
-            if self.logger:
-                self.logger.log_event(event)
 
         # 토론 종료 조건 확인
         if pass_count >= alive_count * 0.5:
@@ -213,8 +203,6 @@ class MafiaGame:
                 target_id=target_id,
             )
             self.history.append(event)
-            if self.logger:
-                self.logger.log_event(event)
 
             # 유효한 투표인지 확인 후 집계
             if (
@@ -296,8 +284,6 @@ class MafiaGame:
         # 이벤트 기록
         if execute_event:
             self.history.append(execute_event)
-            if self.logger:
-                self.logger.log_event(execute_event)
 
             # 처형 성공 시에만 역할 공개 이벤트 추가
             if (
@@ -313,8 +299,6 @@ class MafiaGame:
                     value=self.players[execute_event.target_id].role,
                 )
                 self.history.append(role_reveal_event)
-                if self.logger:
-                    self.logger.log_event(role_reveal_event)
 
         return True
 
@@ -360,8 +344,6 @@ class MafiaGame:
                 target_id=mafia_target,
             )
             self.history.append(kill_event)
-            if self.logger:
-                self.logger.log_event(kill_event)
 
         # --- 3. 의사, 경찰 등 다른 직업 행동 처리 및 기록 ---
         for player_id, action in other_role_actions:
@@ -388,8 +370,6 @@ class MafiaGame:
                         target_id=target_id,
                     )
                     self.history.append(event)
-                    if self.logger:
-                        self.logger.log_event(event)
 
                 elif role == Role.POLICE:
                     event = GameEvent(
@@ -401,8 +381,6 @@ class MafiaGame:
                         value=self.players[target_id].role,
                     )
                     self.history.append(event)
-                    if self.logger:
-                        self.logger.log_event(event)
 
         # --- 4. 최종 살해 및 보호 로직 ---
         final_mafia_target = night_targets.get(Role.MAFIA)
@@ -423,8 +401,6 @@ class MafiaGame:
             value=None,
         )
         self.history.append(ann_event)
-        if self.logger:
-            self.logger.log_event(ann_event)
         return True
 
     def get_game_status(self, viewer_id: Optional[int] = None) -> GameStatus:

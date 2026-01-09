@@ -13,7 +13,7 @@ def make_env_for_worker():
     from core.envs.mafia_env import MafiaEnv
 
     # 워커는 로그를 파일에 안 씀 (logger=None)
-    return MafiaEnv(logger=None)
+    return MafiaEnv()
 
 
 from core.envs.mafia_env import MafiaEnv
@@ -52,7 +52,7 @@ class ExperimentManager:
         [수정] Runner가 로그를 중앙 관리하므로, Env 내부에는 logger를 주지 않습니다.
         """
         # 기존: return MafiaEnv(logger=self.logger)
-        return MafiaEnv(logger=None)
+        return MafiaEnv()
 
     def build_vec_env(self, num_envs: int = 8, num_cpus: int = 4):
         """

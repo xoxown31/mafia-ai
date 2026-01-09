@@ -26,16 +26,15 @@ class EnvAgent(BaseAgent):
 class MafiaEnv(ParallelEnv):
     metadata = {"render_modes": ["human"], "name": "mafia_v1"}
 
-    def __init__(self, render_mode=None, logger=None):
+    def __init__(self, render_mode=None):
         self.possible_agents = [f"player_{i}" for i in range(config.game.PLAYER_COUNT)]
         self.agents = self.possible_agents[:]
         self.render_mode = render_mode
-        self.logger = logger
 
         # Create dummy agents for the engine
         # MafiaGame expects a list of BaseAgent instances
         self.internal_agents = [EnvAgent(i) for i in range(config.game.PLAYER_COUNT)]
-        self.game = MafiaGame(agents=self.internal_agents, logger=logger)
+        self.game = MafiaGame(agents=self.internal_agents)
 
         # === [Multi-Discrete Action Space] ===
         # 형태: [Target, Role]
